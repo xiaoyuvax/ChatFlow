@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>Library</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <LangVersion>13</LangVersion>
+    <RootNamespace>ChatFlow</RootNamespace>
+    <AssemblyName>ChatFlow</AssemblyName>
+    <NoWarn>WFO1000</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Vax-FCTB" Version="2.19.0.223" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="ChatFlow.Tests" />
+  </ItemGroup>
+
+</Project>
