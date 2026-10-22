@@ -2,6 +2,9 @@
 
 **WinForms 虚拟化聊天流式视图控件**：只实例化可见区域附近的行，滚动时复用离屏行控件，长对话与逐 token 流式输出都不卡。
 
+> [!WARNING]
+> 项目正在开发中，API 与行为可能随时调整，暂不保证兼容性。
+
 - 源码：<https://github.com/xiaoyuvax/ChatFlow>
 - 镜像：<https://gitee.com/xiaoyuvax/ChatFlow>
 
