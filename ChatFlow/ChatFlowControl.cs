@@ -41,6 +41,27 @@ namespace ChatFlow
         /// <summary>点击正文/思考区里的可点击链接（URL、图像文件路径）后触发；宿主决定打开方式。</summary>
         public event EventHandler<ChatLinkClickedEventArgs> LinkClicked;
 
+        /// <summary>请求撤回一个问答对（宿主负责删除回话并撤销文件修改）。</summary>
+        public event EventHandler<ChatFlowActionEventArgs> UndoRequested;
+
+        /// <summary>请求复制一个问答对（宿主负责写入剪贴板）。</summary>
+        public event EventHandler<ChatFlowActionEventArgs> CopyRequested;
+
+        internal bool CanUndo => UndoRequested != null;
+        internal bool CanCopy => CopyRequested != null;
+
+        internal void RequestUndo(ChatFlowItem item)
+        {
+            if (item != null) UndoRequested?.Invoke(this, new ChatFlowActionEventArgs(item.Turn));
+        }
+
+        internal void RequestCopy(ChatFlowItem item)
+        {
+            if (item != null) CopyRequested?.Invoke(this, new ChatFlowActionEventArgs(item.Turn));
+        }
+
+        internal void ShowChatMenu(ChatFlowItem item, Point screen) => ChatFlowMenu.Show(this, item, screen);
+
         /// <summary>调查卡提交（answers 为 key→value）。宿主负责持久化并回写 State/AnswerSummary。</summary>
         public event EventHandler<ChatSurveyEventArgs> SurveySubmitted;
 
@@ -278,10 +299,19 @@ namespace ChatFlow
                 int index = 0;
                 foreach (var turn in DataSource.Turns)
                 {
-                    if (turn.User != null) items.Add(new ChatFlowItem(turn, ChatFlowItemKind.User));
+                    ChatFlowItem lastMessage = null;
+                    if (turn.User != null)
+                    {
+                        lastMessage = new ChatFlowItem(turn, ChatFlowItemKind.User);
+                        items.Add(lastMessage);
+                    }
                     // 流式回合保留助手条占位：思考中/占位条，流式结束后换成正文
                     if (turn.Assistant != null || turn.Streaming)
-                        items.Add(new ChatFlowItem(turn, ChatFlowItemKind.Assistant));
+                    {
+                        lastMessage = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
+                        items.Add(lastMessage);
+                    }
+                    if (lastMessage != null) lastMessage.IsPairEnd = true;
 
                     foreach (var survey in surveys.Where(s => s.AnchorTurnIndex == index))
                         items.Add(new ChatFlowItem(turn, ChatFlowItemKind.Card) { Survey = survey });
@@ -979,6 +1009,14 @@ namespace ChatFlow
         public Dictionary<string, string> Answers { get; }
     }
 
+    /// <summary>聊天区操作（撤回/复制）事件参数：目标问答对。</summary>
+    public sealed class ChatFlowActionEventArgs : EventArgs
+    {
+        public ChatFlowActionEventArgs(ChatTurn turn) => Turn = turn;
+
+        public ChatTurn Turn { get; }
+    }
+
     public sealed class ChatSurveyToggledEventArgs : EventArgs
     {
         public ChatSurveyToggledEventArgs(ChatSurvey survey, bool expanded)
@@ -1018,6 +1056,7 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
 
         public ChatTurn Turn { get; }
         public ChatFlowItemKind Kind { get; }
+        internal bool IsPairEnd { get; set; }
         public ChatSurvey Survey { get; init; }
         public ChatLink Link { get; init; }
         public bool IsUser => Kind == ChatFlowItemKind.User;

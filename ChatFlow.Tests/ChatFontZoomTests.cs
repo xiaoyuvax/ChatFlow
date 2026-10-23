@@ -30,6 +30,7 @@ namespace ChatFlow.Tests
 
                 var row = flow.Controls.OfType<ChatMessageRow>().First(r => r.Item != null && !r.Item.IsUser);
                 int before = row.Height;
+                Assert.Equal(flow.BackColor, row.BodyBox.BackColor);
 
                 flow.ChatFont = new Font("Arial", 14f);
                 Application.DoEvents();

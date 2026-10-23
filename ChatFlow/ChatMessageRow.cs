@@ -1,3 +1,4 @@
+using System.Drawing.Drawing2D;
 using FastColoredTextBoxNS;
 
 namespace ChatFlow
@@ -12,15 +13,25 @@ namespace ChatFlow
         private const int RowVPad = 8;         // 行上下留白
         private const int ThinkingHeaderH = 18; // 思考区折叠头高度
         private const int FoldGutterWidth = 12; // FCTB 左侧折叠 gutter（○ 标记可见所需宽度）
+        private const int ActionSize = 24;      // 右下角操作按钮边长
+        private const int ActionGap = 4;        // 两个按钮间距
+        private const int ActionZoneW = 132;    // 右下角悬停感应区宽
+        private const int ActionZoneH = 40;     // 右下角悬停感应区高
         private readonly CheckBox chk;
         private readonly Label lblRole;
         private readonly Label lblThinking;     // 思考区折叠/展开头（无思考区时隐藏）
         private readonly RowTextBox txt;         // 正文
         private readonly RowTextBox txtThinking; // 思考区（可折叠，展开时显示在正文上方）
+        private readonly ChatActionButton btnUndo;
+        private readonly ChatActionButton btnCopy;
+        private readonly System.Windows.Forms.Timer actionHide = new() { Interval = 150 };
         private readonly ChatFlowControl owner;
 
         private bool _binding;
         private bool thinkingVisible;            // 当前条目是否有思考区
+        private bool canUndo;
+        private bool canCopy;
+        private bool actionsShown;
 
         /// <summary>思考区展开状态切换（由折叠头点击触发）。</summary>
         public event Action<ChatFlowItem> ThinkingToggled;
@@ -108,7 +119,7 @@ namespace ChatFlow
                 Paddings = new Padding(Dip(2)),
                 LeftPadding = Dip(FoldGutterWidth),
                 UseCJK = CJKMode.Hanzi,
-                BackColor = P != null ? P.Back : Color.FromArgb(243, 244, 246),   // 思考区：深色用更深的页面底色
+                BackColor = owner.BackColor,
                 Visible = false,
                 TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit, // 消锯齿（双缓冲面下 ClearType 不可用）
                 AllowProportionalFont = true, // 思考区同正文：比例字体
@@ -117,11 +128,33 @@ namespace ChatFlow
             txtThinking.FoldingToggled += () => owner.RequestRelayout(this);
             txtThinking.LinkClicked += (kind, target) => LinkClicked?.Invoke(Item, kind, target);
 
+            txt.ContextMenuRequested += p => owner.ShowChatMenu(Item, p);
+            txtThinking.ContextMenuRequested += p => owner.ShowChatMenu(Item, p);
+
+            btnUndo = new ChatActionButton(ChatActionKind.Undo) { Visible = false, TabStop = false, Cursor = Cursors.Hand };
+            btnCopy = new ChatActionButton(ChatActionKind.Copy) { Visible = false, TabStop = false, Cursor = Cursors.Hand };
+            btnUndo.Click += (_, _) => { HideActions(); owner.RequestUndo(Item); };
+            btnCopy.Click += (_, _) => { HideActions(); owner.RequestCopy(Item); };
+            actionHide.Tick += (_, _) =>
+            {
+                actionHide.Stop();
+                if (!PointerOnActions()) HideActions();
+            };
+            HookActions(txt);
+            HookActions(txtThinking);
+            foreach (var button in new[] { btnUndo, btnCopy })
+            {
+                button.MouseEnter += (_, _) => { actionHide.Stop(); ShowActions(); };
+                button.MouseLeave += (_, _) => ScheduleHideActions();
+            }
+
             Controls.Add(chk);
             Controls.Add(lblRole);
             Controls.Add(lblThinking);
             Controls.Add(txtThinking);
             Controls.Add(txt);
+            Controls.Add(btnUndo);
+            Controls.Add(btnCopy);
         }
 
         /// <summary>绑定数据（池化复用时调用）。返回该行实际需要的高度（含角色栏与留白）。
@@ -132,7 +165,14 @@ namespace ChatFlow
             // 行表面与勾选框底色：主题切换只重绑（OnAppThemeChanged → Bind），不会重建控件，
             // 池化行上一次主题残留的底色（ChatTheme 对快照后新建的行无从还原）必须在这里重贴
             BackColor = Color.Transparent;
-            chk.BackColor = P != null ? P.Back : Color.Transparent;
+            chk.BackColor = owner.BackColor;
+            txt.BackColor = owner.BackColor;
+            txtThinking.BackColor = owner.BackColor;
+            canUndo = owner.CanUndo && item.IsPairEnd;
+            canCopy = owner.CanCopy && item.IsPairEnd;
+            HideActions();
+            btnUndo.BackColor = owner.BackColor;
+            btnCopy.BackColor = owner.BackColor;
             Item = item;
             ContextMenuStrip = owner.ContextMenuStrip;
             chk.ContextMenuStrip = owner.ContextMenuStrip;
@@ -147,12 +187,11 @@ namespace ChatFlow
             ChatTextStyler.ApplyBody(txt, body);
             chk.Checked = item.Turn.Selected;
             chk.Visible = _showSelection;
-            txt.BackColor = P != null ? (item.IsUser ? P.InputBack : P.Control) : (item.IsUser ? Color.White : Color.FromArgb(248, 250, 252));
+            txt.BackColor = owner.BackColor;
             txt.ForeColor = P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
             txtThinking.ForeColor = P != null ? P.ChatThinkingFore : Color.FromArgb(0x5F, 0x6E, 0x7E);
-            // 思考区底色同样按当前主题重贴（深色用更深的页面底色）：只在构造函数里定死的话，
-            // 从深色切回浅色后思考区仍留着上次的深底（实测 bad case）。
-            txtThinking.BackColor = P != null ? P.Back : Color.FromArgb(243, 244, 246);
+            // 思考区底色与聊天背景一致，避免 FCTB 出现色块。
+            txtThinking.BackColor = owner.BackColor;
 
             // 思考区：有内容或流式进行中才显示折叠头；展开时填充思考区文本
             bool streamingNoText = item.Turn.Streaming && string.IsNullOrEmpty(item.Text);
@@ -309,6 +348,72 @@ namespace ChatFlow
 
         public string GetSelectedText() => txt.SelectedText;
 
+        private void HookActions(Control control)
+        {
+            control.MouseEnter += (_, _) => UpdateActionZone(control, control.PointToClient(Cursor.Position));
+            control.MouseMove += (_, e) => UpdateActionZone(control, e.Location);
+            control.MouseLeave += (_, _) => ScheduleHideActions();
+        }
+
+        private void UpdateActionZone(Control control, Point point)
+        {
+            if (!canUndo && !canCopy) return;
+            var rowPoint = new Point(control.Left + point.X, control.Top + point.Y);
+            if (rowPoint.X >= Width - Dip(ActionZoneW) && rowPoint.Y >= Height - Dip(ActionZoneH))
+                ShowActions();
+            else
+                ScheduleHideActions();
+        }
+
+        private void ShowActions()
+        {
+            if (actionsShown || (!canUndo && !canCopy)) return;
+            actionHide.Stop();
+            actionsShown = true;
+            btnUndo.Visible = canUndo;
+            btnCopy.Visible = canCopy;
+            btnUndo.BringToFront();
+            btnCopy.BringToFront();
+        }
+
+        private void HideActions()
+        {
+            actionHide.Stop();
+            actionsShown = false;
+            btnUndo.Visible = false;
+            btnCopy.Visible = false;
+        }
+
+        private void ScheduleHideActions()
+        {
+            if (!actionsShown) return;
+            actionHide.Stop();
+            actionHide.Start();
+        }
+
+        private bool PointerOnActions()
+        {
+            Point point = PointToClient(Cursor.Position);
+            return (btnUndo.Visible && btnUndo.Bounds.Contains(point))
+                || (btnCopy.Visible && btnCopy.Bounds.Contains(point));
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button == MouseButtons.Right) owner.ShowChatMenu(Item, PointToScreen(e.Location));
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                actionHide.Stop();
+                actionHide.Dispose();
+            }
+            base.Dispose(disposing);
+        }
+
         protected override void OnSizeChanged(EventArgs e)
         {
             base.OnSizeChanged(e);
@@ -335,7 +440,25 @@ namespace ChatFlow
                 }
             }
             txt.SetBounds(0, y, Math.Max(Dip(20), Width - Dip(TextRightSpace)), Math.Max(Dip(20), Height - y - Dip(RowVPad) / 2));
+
+            int size = Dip(ActionSize);
+            int gap = Dip(ActionGap);
+            int count = (canUndo ? 1 : 0) + (canCopy ? 1 : 0);
+            int total = count * size + (count > 1 ? gap : 0);
+            int bx = Math.Max(0, Width - Dip(TextRightSpace) - total);
+            int by = Math.Max(0, Height - Dip(RowVPad) - size - Dip(2));
+            if (canUndo)
+            {
+                btnUndo.SetBounds(bx, by, size, size);
+                bx += size + gap;
+            }
+            if (canCopy) btnCopy.SetBounds(bx, by, size, size);
+            btnUndo.BackColor = owner.BackColor;
+            btnCopy.BackColor = owner.BackColor;
+
             txt.BringToFront();
+            btnUndo.BringToFront();
+            btnCopy.BringToFront();
         }
     }
 
@@ -349,6 +472,9 @@ namespace ChatFlow
 
         /// <summary>点击可点击链接（URL / 图像文件路径）后触发；宿主决定怎么处理。</summary>
         public event Action<ChatTextStyler.ChatLinkKind, string> LinkClicked;
+
+        /// <summary>右键请求菜单（参数为屏幕坐标）。</summary>
+        public event Action<Point> ContextMenuRequested;
 
         /// <summary>当前文本中的可点击链接（ChatTextStyler 赋样式时一并算出，供命中测试）。</summary>
         internal List<ChatTextStyler.ChatLink> LinkSpans;
@@ -391,6 +517,13 @@ namespace ChatFlow
             }
         }
 
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button == MouseButtons.Right)
+                ContextMenuRequested?.Invoke(PointToScreen(e.Location));
+        }
+
         /// <summary>应用外部字体（克隆，避免共享实例被 FCTB 释放）。</summary>
         public void SetFontPreserveZoom(Font font)
             => Font = new Font(font, font.Style);
@@ -409,6 +542,93 @@ namespace ChatFlow
         {
             GoEnd();
             Selection.Start = Selection.End;
+        }
+    }
+
+    internal enum ChatActionKind
+    {
+        Undo,
+        Copy
+    }
+
+    /// <summary>Antd 风格的右下角圆形悬停操作按钮（只画图标）。</summary>
+    internal sealed class ChatActionButton : Control
+    {
+        private bool hover;
+
+        public ChatActionButton(ChatActionKind kind)
+        {
+            Kind = kind;
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer, true);
+            Size = new Size(24, 24);
+            Cursor = Cursors.Hand;
+            TabStop = false;
+        }
+
+        public ChatActionKind Kind { get; }
+
+        protected override void OnMouseEnter(EventArgs e)
+        {
+            hover = true;
+            Invalidate();
+            base.OnMouseEnter(e);
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            hover = false;
+            Invalidate();
+            base.OnMouseLeave(e);
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var palette = ChatTheme.Current;
+            Color icon = palette?.ForeDim ?? Color.FromArgb(0x5F, 0x6E, 0x7E);
+            Color hoverBack = palette?.MenuHover ?? Color.FromArgb(0xF0, 0xF2, 0xF5);
+            e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+            if (hover)
+            {
+                using var path = RoundedRect(new Rectangle(1, 1, Width - 3, Height - 3), 4);
+                using var brush = new SolidBrush(hoverBack);
+                e.Graphics.FillPath(brush, path);
+            }
+            DrawIcon(e.Graphics, icon);
+        }
+
+        private void DrawIcon(Graphics g, Color color)
+        {
+            float cx = Width / 2f;
+            float cy = Height / 2f;
+            using var pen = new Pen(color, 1.6f);
+            if (Kind == ChatActionKind.Copy)
+            {
+                g.DrawRectangle(pen, cx - 5, cy - 5, 7, 9);
+                g.DrawRectangle(pen, cx - 1, cy - 1, 7, 9);
+                return;
+            }
+
+            g.DrawArc(pen, cx - 5, cy - 5, 10, 10, 35, 285);
+            using var brush = new SolidBrush(color);
+            g.FillPolygon(brush,
+            [
+                new PointF(cx - 0.5f, cy - 6.5f),
+                new PointF(cx - 5.5f, cy - 4.5f),
+                new PointF(cx - 1.5f, cy - 1.5f)
+            ]);
+        }
+
+        private static GraphicsPath RoundedRect(Rectangle rect, int radius)
+        {
+            var path = new GraphicsPath();
+            int d = Math.Max(1, Math.Min(radius * 2, Math.Min(rect.Width, rect.Height)));
+            path.AddArc(rect.Left, rect.Top, d, d, 180, 90);
+            path.AddArc(rect.Right - d, rect.Top, d, d, 270, 90);
+            path.AddArc(rect.Right - d, rect.Bottom - d, d, d, 0, 90);
+            path.AddArc(rect.Left, rect.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            return path;
         }
     }
 }
