@@ -22,8 +22,8 @@
 
 ## 环境要求
 
-- `net10.0-windows`，WinForms
-- 依赖 [Vax-FCTB](https://www.nuget.org/packages/Vax-FCTB) `2.19.0.223`（FastColoredTextBox 的 .NET 10 兼容分支）
+- `net7.0-windows7.0` ~ `net10.0-windows7.0`，WinForms
+- 依赖 [Vax-FCTB](https://www.nuget.org/packages/Vax-FCTB) `2.19.0.224`（FastColoredTextBox）
 
 ## 快速开始
 

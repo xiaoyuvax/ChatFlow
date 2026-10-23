@@ -133,10 +133,10 @@ namespace ChatFlow
         }
 
         /// <summary>文本中的一个可点击链接（绝对字符区间 + 目标文本）。</summary>
-        internal readonly record struct ChatLink(int Start, int Length, ChatLinkKind Kind, string Target);
+        public readonly record struct ChatLink(int Start, int Length, ChatLinkKind Kind, string Target);
 
         /// <summary>收集文本中可点击的链接：URL + 图像文件路径（PathStyle 已高亮的那批里按扩展名过滤）。</summary>
-        internal static List<ChatLink> CollectLinks(string text)
+        public static List<ChatLink> CollectLinks(string text)
         {
             var links = new List<ChatLink>();
             if (string.IsNullOrEmpty(text)) return links;
@@ -150,7 +150,7 @@ namespace ChatFlow
         }
 
         /// <summary>命中测试：返回覆盖给定绝对字符偏移的链接；无则 null（越界偏移安全）。</summary>
-        internal static ChatLink? LinkAt(List<ChatLink> links, int index)
+        public static ChatLink? LinkAt(List<ChatLink> links, int index)
         {
             if (links == null || links.Count == 0 || index < 0) return null;
             foreach (var l in links)

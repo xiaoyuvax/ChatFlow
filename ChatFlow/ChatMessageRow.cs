@@ -146,6 +146,7 @@ namespace ChatFlow
             txt.SetTextCaretEnd(body);
             ChatTextStyler.ApplyBody(txt, body);
             chk.Checked = item.Turn.Selected;
+            chk.Visible = _showSelection;
             txt.BackColor = P != null ? (item.IsUser ? P.InputBack : P.Control) : (item.IsUser ? Color.White : Color.FromArgb(248, 250, 252));
             txt.ForeColor = P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
             txtThinking.ForeColor = P != null ? P.ChatThinkingFore : Color.FromArgb(0x5F, 0x6E, 0x7E);
@@ -290,6 +291,20 @@ namespace ChatFlow
             _binding = true;
             chk.Checked = Item.Turn.Selected;
             _binding = false;
+        }
+
+        private bool _showSelection;
+
+        /// <summary>是否显示左侧勾选框（选择性保存等场景才开）。</summary>
+        public bool ShowSelection
+        {
+            get => _showSelection;
+            set
+            {
+                if (_showSelection == value) return;
+                _showSelection = value;
+                chk.Visible = value;
+            }
         }
 
         public string GetSelectedText() => txt.SelectedText;

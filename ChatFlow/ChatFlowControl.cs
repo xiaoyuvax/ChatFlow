@@ -13,6 +13,11 @@ namespace ChatFlow
         /// <summary>行高缓存（含上下间距），按 ChatFlowItem 顺序排列。</summary>
         private readonly List<ChatFlowItem> items = [];
         private readonly Dictionary<ChatFlowItem, ChatMessageRow> realized = [];
+        private readonly Dictionary<ChatFlowItem, ChatCardRow> cardRows = [];
+        private readonly List<ChatSurvey> surveys = [];
+        private readonly List<ChatLink> links = [];
+        private readonly Dictionary<ChatFlowItem, ChatLinkRow> linkRows = [];
+        private string expandedSurveyId;
         private readonly Dictionary<ChatFlowItem, int> heightCache = [];
         private readonly List<ChatMessageRow> rowPool = [];
         private readonly VScrollBar vbar = new();
@@ -36,8 +41,87 @@ namespace ChatFlow
         /// <summary>点击正文/思考区里的可点击链接（URL、图像文件路径）后触发；宿主决定打开方式。</summary>
         public event EventHandler<ChatLinkClickedEventArgs> LinkClicked;
 
+        /// <summary>调查卡提交（answers 为 key→value）。宿主负责持久化并回写 State/AnswerSummary。</summary>
+        public event EventHandler<ChatSurveyEventArgs> SurveySubmitted;
+
+        /// <summary>调查卡被跳过：收起，保留待答。</summary>
+        public event EventHandler<ChatSurveyEventArgs> SurveySkipped;
+
+        /// <summary>调查卡展开/收起（只有最近一条会保持展开）。</summary>
+        public event EventHandler<ChatSurveyToggledEventArgs> SurveyToggled;
+
+        /// <summary>设置嵌入对话流的调查卡；AnchorTurnIndex 决定插在哪一轮之后（-1 = 末尾）。</summary>
+        public void SetSurveys(IEnumerable<ChatSurvey> value)
+        {
+            surveys.Clear();
+            if (value != null) surveys.AddRange(value);
+            if (heightCache.Count > 0) heightCache.Clear();
+            RebuildItems();
+        }
+
+        public IReadOnlyList<ChatSurvey> Surveys => surveys;
+
+        /// <summary>设置可点击导航条目（图标 + 标题）。</summary>
+        public void SetLinks(IEnumerable<ChatLink> value)
+        {
+            links.Clear();
+            if (value != null) links.AddRange(value);
+            RebuildItems();
+        }
+
+        public event EventHandler<ChatLinkEventArgs> LinkActivated;
+
+        private void OnCardSubmitted(ChatSurvey survey, Dictionary<string, string> answers)
+        {
+            survey.State = "answered";
+            survey.AnswerSummary = answers.Count == 0
+                ? "已提交"
+                : string.Join(" · ", answers.Select(kv => kv.Value)).Trim();
+            expandedSurveyId = null;
+            SurveySubmitted?.Invoke(this, new ChatSurveyEventArgs(survey, answers));
+            RebuildItems();
+        }
+
+        private void OnCardSkipped(ChatSurvey survey)
+        {
+            if (expandedSurveyId == survey.Id) expandedSurveyId = null;
+            SurveySkipped?.Invoke(this, new ChatSurveyEventArgs(survey, null));
+            RebuildItems();
+        }
+
+        private void OnCardToggled(ChatSurvey survey, bool expanded)
+        {
+            expandedSurveyId = expanded ? survey.Id : null;
+            if (cardRows.Count > 0) { heightCache.Clear(); RequestRelayoutOfCards(); }
+            SurveyToggled?.Invoke(this, new ChatSurveyToggledEventArgs(survey, expanded));
+        }
+
+        private void RequestRelayoutOfCards()
+        {
+            foreach (var item in items.Where(i => i.Kind == ChatFlowItemKind.Card).ToList())
+                heightCache.Remove(item);
+            RebuildSums();
+            UpdateScrollbar();
+            Relayout();
+        }
+
         /// <summary>对话数据集；设置后控件全权负责展现与勾选操作。</summary>
         public ChatTurnBook DataSource { get; private set; }
+
+        private bool showSelection;
+
+        /// <summary>是否显示消息左侧勾选框；默认关闭，选择性保存时再开。</summary>
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool ShowSelection
+        {
+            get => showSelection;
+            set
+            {
+                if (showSelection == value) return;
+                showSelection = value;
+                foreach (var row in realized.Values) row.ShowSelection = value;
+            }
+        }
 
         /// <summary>聊天正文字体；缩放时统一修改此属性。</summary>
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
@@ -58,6 +142,9 @@ namespace ChatFlow
 
         /// <summary>是否自动跟随滚动到最新内容（用户向上翻阅时暂停，滚回底部后恢复）。</summary>
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        /// <summary>空列表时的占位提示。</summary>
+        public string PlaceholderText { get; set; } = "暂无对话";
+
         public bool AutoScrollToEnd
         {
             get => autoScrollToEnd;
@@ -187,15 +274,26 @@ namespace ChatFlow
             heightCache.Clear();
             if (DataSource != null)
             {
+                int index = 0;
                 foreach (var turn in DataSource.Turns)
                 {
                     if (turn.User != null) items.Add(new ChatFlowItem(turn, ChatFlowItemKind.User));
-                    // 流式回合无条件生成助手条目：占位（思考中……）与思考阶段 Assistant 尚未创建，
-                    // 但思考区/占位符仍需可见；非流式回合仍按原规则跳过空助手
+                    // 流式回合保留助手条占位：思考中/占位条，流式结束后换成正文
                     if (turn.Assistant != null || turn.Streaming)
                         items.Add(new ChatFlowItem(turn, ChatFlowItemKind.Assistant));
+
+                    foreach (var survey in surveys.Where(s => s.AnchorTurnIndex == index))
+                        items.Add(new ChatFlowItem(turn, ChatFlowItemKind.Card) { Survey = survey });
+                    foreach (var link in links.Where(l => l.AnchorTurnIndex == index))
+                        items.Add(new ChatFlowItem(turn, ChatFlowItemKind.Link) { Link = link });
+                    index++;
                 }
+                foreach (var survey in surveys.Where(s => s.AnchorTurnIndex < 0 || s.AnchorTurnIndex >= index))
+                    items.Add(new ChatFlowItem(DataSource.Turns.LastOrDefault(), ChatFlowItemKind.Card) { Survey = survey });
+                foreach (var link in links.Where(l => l.AnchorTurnIndex < 0 || l.AnchorTurnIndex >= index))
+                    items.Add(new ChatFlowItem(DataSource.Turns.LastOrDefault(), ChatFlowItemKind.Link) { Link = link });
             }
+
             UpdateScrollAndLayout();
             if (autoScrollToEnd) ScrollToEnd();
         }
@@ -210,8 +308,33 @@ namespace ChatFlow
         /// <summary>估算条目高度（未实例化时的预估，实例化后按真实渲染校正）。
         /// 估算结果也写入缓存：宽度/字体/结构变化时会清空，因此可安全记忆，
         /// 避免每次 RebuildSums 对所有长文本重复逐字符遍历（流式卡顿主因）。</summary>
+        private bool IsLatestPending(ChatSurvey survey)
+        {
+            if (survey == null) return false;
+            for (int i = surveys.Count - 1; i >= 0; i--)
+            {
+                if (surveys[i].State == "answered") continue;
+                return surveys[i].Id == survey.Id;
+            }
+            return false;
+        }
+
         private int EstimateItem(ChatFlowItem item)
         {
+            if (item.Kind == ChatFlowItemKind.Link)
+            {
+                if (heightCache.TryGetValue(item, out int linkH)) return linkH;
+                linkH = (int)Math.Round(30 * DeviceDpi / 96.0);
+                heightCache[item] = linkH;
+                return linkH;
+            }
+            if (item.Kind == ChatFlowItemKind.Card)
+            {
+                if (heightCache.TryGetValue(item, out int cardH)) return cardH;
+                cardH = 64 + 26 * (item.Survey?.Fields.Count ?? 0);
+                heightCache[item] = cardH;
+                return cardH;
+            }
             if (heightCache.TryGetValue(item, out int h)) return h;
             // 粗估：按字符宽度与文本长度推算行数（CJK 宽字符按 2 计），仅用于定位可见范围；
             // 真实高度在行实例化（Bind 返回测量值）后写入缓存。
@@ -338,6 +461,22 @@ namespace ChatFlow
                     if (!itemIndex.TryGetValue(item, out int idx)) { ReleaseRow(row); continue; }
                     if (idx < first || idx > last) ReleaseRow(row);
                 }
+                foreach (var (item, lrow) in linkRows.ToArray())
+                {
+                    if (!itemIndex.TryGetValue(item, out int lidx) || lidx < first || lidx > last)
+                    {
+                        linkRows.Remove(item);
+                        lrow.Hide();
+                    }
+                }
+                foreach (var (item, card) in cardRows.ToArray())
+                {
+                    if (!itemIndex.TryGetValue(item, out int idx) || idx < first || idx > last)
+                    {
+                        cardRows.Remove(item);
+                        card.Hide();
+                    }
+                }
 
                 int y = prefixSum[first];
                 int rowWidth = vbar.Visible ? Width - vbar.Width : Width;
@@ -345,6 +484,54 @@ namespace ChatFlow
                 {
                     var item = items[i];
                     int cached = prefixSum[i + 1] - prefixSum[i];
+                    if (item.Kind == ChatFlowItemKind.Link)
+                    {
+                        if (!linkRows.TryGetValue(item, out var linkRow))
+                        {
+                            linkRow = new ChatLinkRow();
+                            linkRow.Activated += l => LinkActivated?.Invoke(this, new ChatLinkEventArgs(l));
+                            Controls.Add(linkRow);
+                            linkRows[item] = linkRow;
+                        }
+                        int linkHeight = linkRow.Bind(item.Link, chatFont, rowWidth);
+                        if (linkHeight != cached)
+                        {
+                            heightCache[item] = linkHeight;
+                            corrected = true;
+                        }
+                        int linkInset = (int)Math.Round(12 * DeviceDpi / 96.0);
+                        linkRow.SetBounds(linkInset, y - viewTop, Math.Max(40, rowWidth - linkInset * 2), prefixSum[i + 1] - prefixSum[i]);
+                        linkRow.BringToFront();
+                        y = prefixSum[i + 1];
+                        continue;
+                    }
+                    if (item.Kind == ChatFlowItemKind.Card)
+                    {
+                        bool expandedCard = item.Survey != null
+                            && item.Survey.State != "answered"
+                            && (expandedSurveyId == item.Survey.Id
+                                || expandedSurveyId == null && IsLatestPending(item.Survey));
+                        if (!cardRows.TryGetValue(item, out var card))
+                        {
+                            card = new ChatCardRow { Visible = true };
+                            card.Submitted += OnCardSubmitted;
+                            card.Skipped += OnCardSkipped;
+                            card.Toggled += OnCardToggled;
+                            Controls.Add(card);
+                            cardRows[item] = card;
+                        }
+                        int measuredCard = card.Bind(item.Survey, chatFont, rowWidth, expandedCard);
+                        if (measuredCard != cached)
+                        {
+                            heightCache[item] = measuredCard;
+                            corrected = true;
+                        }
+                        int inset = (int)Math.Round(12 * DeviceDpi / 96.0);
+                        card.SetBounds(inset, y - viewTop, Math.Max(40, rowWidth - inset * 2), prefixSum[i + 1] - prefixSum[i]);
+                        card.BringToFront();
+                        y = prefixSum[i + 1];
+                        continue;
+                    }
                     if (!realized.TryGetValue(item, out var row))
                     {
                         row = AcquireRow();
@@ -353,6 +540,7 @@ namespace ChatFlow
                         row.SelectionToggled += Row_SelectionToggled;
                         row.ThinkingToggled += Row_ThinkingToggled;
                         row.LinkClicked += Row_LinkClicked;
+                        row.ShowSelection = showSelection;
                         if (measured != cached)
                         {
                             heightCache[item] = measured;
@@ -486,6 +674,18 @@ namespace ChatFlow
         }
 
         /// <summary>滚动到指定回话（顶部对齐可见）。</summary>
+        /// <summary>滚动到指定调查卡。</summary>
+        public void ScrollToSurvey(string surveyId)
+        {
+            if (string.IsNullOrEmpty(surveyId)) return;
+            var item = items.FirstOrDefault(i => i.Survey?.Id == surveyId);
+            int idx = item != null ? items.IndexOf(item) : -1;
+            if (idx < 0) return;
+            if (!vbar.Visible) { Relayout(); return; }
+            SetScrollValueInternal(Math.Min(prefixSum[idx], MaxScrollValue));
+            Relayout();
+            UpdateJumpToEndButton();
+        }
         public void ScrollToTurn(int turnIndex)
         {
             if (DataSource == null || turnIndex < 0) return;
@@ -740,7 +940,7 @@ namespace ChatFlow
             if (items.Count == 0)
             {
                 using var br = new SolidBrush(Color.DimGray);
-                string tip = "暂无对话";
+                string tip = PlaceholderText;
                 var sz = e.Graphics.MeasureString(tip, chatFont);
                 e.Graphics.DrawString(tip, chatFont, br, (ClientSize.Width - sz.Width) / 2, 10);
             }
@@ -761,10 +961,35 @@ namespace ChatFlow
     {
         User,
         Assistant,
+        Card,
+        Link,
     }
 
     /// <summary>聊天区内可点击链接被点击的事件参数（条目 + 种类 + 目标文本）。</summary>
-    public sealed class ChatLinkClickedEventArgs : EventArgs
+        public sealed class ChatSurveyEventArgs : EventArgs
+    {
+        public ChatSurveyEventArgs(ChatSurvey survey, Dictionary<string, string> answers)
+        {
+            Survey = survey;
+            Answers = answers;
+        }
+
+        public ChatSurvey Survey { get; }
+        public Dictionary<string, string> Answers { get; }
+    }
+
+    public sealed class ChatSurveyToggledEventArgs : EventArgs
+    {
+        public ChatSurveyToggledEventArgs(ChatSurvey survey, bool expanded)
+        {
+            Survey = survey;
+            Expanded = expanded;
+        }
+
+        public ChatSurvey Survey { get; }
+        public bool Expanded { get; }
+    }
+public sealed class ChatLinkClickedEventArgs : EventArgs
     {
         public ChatLinkClickedEventArgs(ChatFlowItem item, ChatTextStyler.ChatLinkKind kind, string target)
         {
@@ -792,6 +1017,8 @@ namespace ChatFlow
 
         public ChatTurn Turn { get; }
         public ChatFlowItemKind Kind { get; }
+        public ChatSurvey Survey { get; init; }
+        public ChatLink Link { get; init; }
         public bool IsUser => Kind == ChatFlowItemKind.User;
 
         /// <summary>展示文本：助手条目在正文前附上可见的工具调用行（每次调用一行），示意 Agent 发起了工具/助理调用。

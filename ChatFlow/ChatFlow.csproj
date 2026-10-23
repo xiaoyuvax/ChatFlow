@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0-windows</TargetFramework>
+    <TargetFrameworks>net10.0-windows7.0;net9.0-windows7.0;net8.0-windows7.0;net7.0-windows7.0</TargetFrameworks>
     <OutputType>Library</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -9,11 +9,12 @@
     <LangVersion>13</LangVersion>
     <RootNamespace>ChatFlow</RootNamespace>
     <AssemblyName>ChatFlow</AssemblyName>
+    <Version>0.1.1</Version>
     <NoWarn>WFO1000</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Vax-FCTB" Version="2.19.0.223" />
+    <PackageReference Include="Vax-FCTB" Version="2.19.0.224" />
   </ItemGroup>
 
   <ItemGroup>
