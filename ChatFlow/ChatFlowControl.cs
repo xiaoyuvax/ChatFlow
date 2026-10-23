@@ -135,7 +135,8 @@ namespace ChatFlow
                     chatFont.Dispose();
                 chatFont = (Font)value.Clone();
                 heightCache.Clear();
-                foreach (var row in realized.Values) row.ApplyFont(chatFont);
+                foreach (var row in realized.Values.ToArray())
+                    ReleaseRow(row);
                 UpdateScrollAndLayout();
             }
         }
