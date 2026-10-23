@@ -9,12 +9,12 @@
     <LangVersion>13</LangVersion>
     <RootNamespace>ChatFlow</RootNamespace>
     <AssemblyName>ChatFlow</AssemblyName>
-    <Version>0.1.3</Version>
+    <Version>0.1.4</Version>
     <NoWarn>WFO1000</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <PackageReference Include="Vax-FCTB" Version="2.19.0.224" />
+    <PackageReference Include="Vax-FCTB" Version="2.19.0.225" />
   </ItemGroup>
 
   <ItemGroup>
