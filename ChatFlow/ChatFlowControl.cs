@@ -17,6 +17,7 @@ namespace ChatFlow
         private readonly List<ChatSurvey> surveys = [];
         private readonly List<ChatLink> links = [];
         private readonly Dictionary<ChatFlowItem, ChatLinkRow> linkRows = [];
+        private readonly Dictionary<ChatFlowItem, ChatThinkingRow> thinkingRows = [];
         private string expandedSurveyId;
         private readonly Dictionary<ChatFlowItem, int> heightCache = [];
         private readonly List<ChatMessageRow> rowPool = [];
@@ -323,6 +324,11 @@ namespace ChatFlow
                     items.Add(new ChatFlowItem(DataSource.Turns.LastOrDefault(), ChatFlowItemKind.Card) { Survey = survey });
                 foreach (var link in links.Where(l => l.AnchorTurnIndex < 0 || l.AnchorTurnIndex >= index))
                     items.Add(new ChatFlowItem(DataSource.Turns.LastOrDefault(), ChatFlowItemKind.Link) { Link = link });
+
+                // 执行进行中：末尾常驻「思考中…」动画行（正文已开始流式时也保留，提示仍在工作）
+                var streamingTurn = DataSource.Turns.LastOrDefault();
+                if (streamingTurn?.Streaming == true)
+                    items.Add(new ChatFlowItem(streamingTurn, ChatFlowItemKind.Thinking));
             }
 
             UpdateScrollAndLayout();
@@ -352,6 +358,12 @@ namespace ChatFlow
 
         private int EstimateItem(ChatFlowItem item)
         {
+            if (item.Kind == ChatFlowItemKind.Thinking)
+            {
+                int thinkingH = (int)Math.Round(ChatThinkingRow.RowHeightDip * DeviceDpi / 96.0);
+                heightCache[item] = thinkingH;
+                return thinkingH;
+            }
             if (item.Kind == ChatFlowItemKind.Link)
             {
                 if (heightCache.TryGetValue(item, out int linkH)) return linkH;
@@ -379,10 +391,6 @@ namespace ChatFlow
             if (item.ThinkingText != null && !item.ThinkingExpanded)
             {
                 units += 4; // 折叠头一行
-            }
-            else if (item.ThinkingText == null && item.Turn.Streaming && string.IsNullOrEmpty(text))
-            {
-                units += 4; // 流式占位（思考中……）一行
             }
             else if (thinkingVisible)
             {
@@ -508,6 +516,14 @@ namespace ChatFlow
                         card.Hide();
                     }
                 }
+                foreach (var (item, thinking) in thinkingRows.ToArray())
+                {
+                    if (!itemIndex.TryGetValue(item, out int idx) || idx < first || idx > last)
+                    {
+                        thinkingRows.Remove(item);
+                        thinking.Hide();
+                    }
+                }
 
                 int y = prefixSum[first];
                 int rowWidth = vbar.Visible ? Width - vbar.Width : Width;
@@ -560,6 +576,27 @@ namespace ChatFlow
                         int inset = (int)Math.Round(12 * DeviceDpi / 96.0);
                         card.SetBounds(inset, y - viewTop, Math.Max(40, rowWidth - inset * 2), prefixSum[i + 1] - prefixSum[i]);
                         card.BringToFront();
+                        y = prefixSum[i + 1];
+                        continue;
+                    }
+                    if (item.Kind == ChatFlowItemKind.Thinking)
+                    {
+                        if (!thinkingRows.TryGetValue(item, out var thinking))
+                        {
+                            thinking = new ChatThinkingRow { Visible = true };
+                            Controls.Add(thinking);
+                            thinkingRows[item] = thinking;
+                        }
+                        int measuredThinking = thinking.Bind(rowWidth);
+                        if (measuredThinking != cached)
+                        {
+                            heightCache[item] = measuredThinking;
+                            corrected = true;
+                        }
+                        int thinkingInset = (int)Math.Round(12 * DeviceDpi / 96.0);
+                        thinking.SetBounds(thinkingInset, y - viewTop,
+                            Math.Max(40, rowWidth - thinkingInset * 2), prefixSum[i + 1] - prefixSum[i]);
+                        thinking.BringToFront();
                         y = prefixSum[i + 1];
                         continue;
                     }
@@ -830,7 +867,7 @@ namespace ChatFlow
             {
                 if (!row.Visible) continue;
                 int clipped = row.GetClipping();
-                sb.Append($" | [{(item.IsUser ? "U" : "A")}]clip={(clipped == 0 ? "OK" : clipped.ToString())}");
+                sb.Append($" | [{(item.IsUser ? "U" : "A")}]clip={(clipped == 0 ? "OK" : clipped.ToString())} md={(row.IsMarkdownRendered ? "1" : "0")}");
             }
             return sb.ToString();
         }
@@ -994,6 +1031,8 @@ namespace ChatFlow
         Assistant,
         Card,
         Link,
+        /// <summary>末尾的「思考中…」动画行（仅执行进行中出现，不承载消息内容）。</summary>
+        Thinking,
     }
 
     /// <summary>聊天区内可点击链接被点击的事件参数（条目 + 种类 + 目标文本）。</summary>
@@ -1069,6 +1108,7 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         {
             get
             {
+                if (Kind == ChatFlowItemKind.Thinking) return string.Empty;
                 if (IsUser) return Turn.UserText;
                 if (Turn.Streaming)
                 {
@@ -1089,7 +1129,7 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         {
             get
             {
-                if (IsUser) return null;
+                if (IsUser || Kind == ChatFlowItemKind.Thinking) return null;
                 var parts = new List<string>();
                 if (!string.IsNullOrEmpty(Turn.ToolTraceText)) parts.Add(Turn.ToolTraceText);
                 if (!string.IsNullOrEmpty(Turn.ReasoningText)) parts.Add(Turn.ReasoningText);

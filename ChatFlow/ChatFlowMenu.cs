@@ -33,7 +33,13 @@ namespace ChatFlow
             menu.Opened += (_, _) => menu.Region = new Region(RoundedRect(menu.ClientRectangle, radius));
             if (undo) menu.Items.Add(Item("撤回", () => owner.RequestUndo(item)));
             if (copy) menu.Items.Add(Item("复制", () => owner.RequestCopy(item)));
-            menu.Closed += (_, _) => menu.Dispose();
+            menu.Closed += (_, _) =>
+            {
+                //Closed 在菜单关闭流程中间同步触发：这里立即 Dispose 会让 WinForms 的
+                //ModalMenuFilter 继续访问已销毁的句柄（ObjectDisposedException 直接崩进程），故延后一轮消息循环。
+                if (owner.IsDisposed || !owner.IsHandleCreated) { menu.Dispose(); return; }
+                owner.BeginInvoke((Action)(() => menu.Dispose()));
+            };
             menu.Show(screen);
         }
 

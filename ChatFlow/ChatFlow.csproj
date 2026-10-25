@@ -9,12 +9,20 @@
     <LangVersion>13</LangVersion>
     <RootNamespace>ChatFlow</RootNamespace>
     <AssemblyName>ChatFlow</AssemblyName>
-    <Version>0.1.4</Version>
+    <Version>0.1.5</Version>
     <NoWarn>WFO1000</NoWarn>
   </PropertyGroup>
 
-  <ItemGroup>
+  <!-- FCTB 源码与本仓库并列（../FastColoredTextBox）时直接引用源码；单独克隆 ChatFlow 时回退到 NuGet 包。 -->
+  <ItemGroup Condition="Exists('..\..\FastColoredTextBox\FastColoredTextBox\FastColoredTextBox.csproj')">
+    <ProjectReference Include="..\..\FastColoredTextBox\FastColoredTextBox\FastColoredTextBox.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="!Exists('..\..\FastColoredTextBox\FastColoredTextBox\FastColoredTextBox.csproj')">
     <PackageReference Include="Vax-FCTB" Version="2.19.0.225" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' != 'net7.0-windows7.0'">
+    <PackageReference Include="CDS.Markdown.Lite" Version="1.5.7" />
   </ItemGroup>
 
   <ItemGroup>
