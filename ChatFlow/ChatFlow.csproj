@@ -9,7 +9,7 @@
     <LangVersion>13</LangVersion>
     <RootNamespace>ChatFlow</RootNamespace>
     <AssemblyName>ChatFlow</AssemblyName>
-    <Version>0.1.5</Version>
+    <Version>0.1.6</Version>
     <NoWarn>WFO1000</NoWarn>
   </PropertyGroup>
 

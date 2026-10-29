@@ -9,7 +9,7 @@ namespace ChatFlow
     internal sealed class ChatThinkingRow : Control
     {
         internal const int RowHeightDip = 40;
-        private const string IndicatorText = "思考中…";
+        private const string IndicatorText = "工作中…";
 
         private readonly System.Windows.Forms.Timer spin = new() { Interval = 55 };
         private readonly Font font = new("Microsoft YaHei UI", 9F);

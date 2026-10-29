@@ -27,7 +27,7 @@ namespace ChatFlow
         /// <summary>内部改滚动值中：此时的 ValueChanged 不算「用户拖动」，不改变「跟随末尾」状态。</summary>
         private bool settingScrollInternally;
 
-        private Font chatFont = new("Consolas", 9.75F);
+        private Font chatFont = new("Microsoft YaHei UI", 9F);
         private bool autoScrollToEnd = true;
         private int totalHeight;
         private int[] prefixSum = [];
@@ -203,11 +203,13 @@ namespace ChatFlow
         /// <summary>是否处于内容末尾（滚动条不可见=内容不足一屏，也算末尾）。</summary>
         private bool IsAtEnd => !vbar.Visible || vbar.Value >= MaxScrollValue;
 
-        /// <summary>程序内部改滚动值：不算「用户拖动」，不改变自动跟随状态。</summary>
+        /// <summary>程序内部改滚动值：不算「用户拖动」，不改变自动跟随状态。
+        /// 必须按 MaxValue 上限钳制：控件尚未布局时（高度≈0）LargeChange 只有下限 10，
+        /// 直接写 totalHeight-viewH 会越过 ScrollBar 允许的最大值并抛 ArgumentOutOfRangeException。</summary>
         private void SetScrollValueInternal(int value)
         {
             settingScrollInternally = true;
-            try { vbar.Value = value; }
+            try { vbar.Value = Math.Clamp(value, vbar.Minimum, Math.Max(vbar.Minimum, vbar.Maximum - vbar.LargeChange + 1)); }
             finally { settingScrollInternally = false; }
         }
 
@@ -432,8 +434,10 @@ namespace ChatFlow
             if (!needBar) return;
             int maxScroll = Math.Max(0, totalHeight - visibleH);
             vbar.Minimum = 0;
-            vbar.Maximum = Math.Max(totalHeight - 1, 1);
+            // WinForms 语义：可滚动上限 = Maximum - LargeChange + 1，故 Maximum 须按 LargeChange 抬高，
+            // 使可滚动上限恰好 = maxScroll（内容末尾），否则末尾会多出可下拉的空白。
             vbar.LargeChange = Math.Max(10, visibleH / 2);
+            vbar.Maximum = Math.Min(Math.Max(totalHeight - 1, 1), maxScroll + vbar.LargeChange - 1);
             vbar.SmallChange = 16;
             if (autoScrollToEnd)
                 SetScrollValueInternal(maxScroll);

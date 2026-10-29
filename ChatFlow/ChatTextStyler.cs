@@ -98,15 +98,17 @@ namespace ChatFlow
         private static readonly Regex LinkPathRegex = new(
             @"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s<>|:*?""`),;\r\n]+(?: [^\s<>|:*?""`),;\r\n]+)*\.[A-Za-z0-9]{1,5}(?![A-Za-z0-9])",
             RegexOptions.Compiled);
-        // 形如「» #3 tool(args) → 成功 · 420ms」：序号可选（新格式带步号，历史文本可能不带）
+        // 形如「» #3 tool(args) → 成功 · 420ms」：序号可选（历史文本用这种带 » 的旧格式）
         private static readonly Regex ToolCallRegex = new(@"^»\s*(#\d+\s+)?\S+\s*\(.*$", RegexOptions.Compiled | RegexOptions.Multiline);
+        // 新格式「tool(args) · 348ms」：整行不再是工具轨迹标记，只把工具名加粗
+        private static readonly Regex ToolNameRegex = new(@"^[A-Za-z_][\w\-\.]*(?=\()", RegexOptions.Compiled | RegexOptions.Multiline);
         private static readonly Regex ToolOkRegex = new(@"→\s*成功", RegexOptions.Compiled);
-        private static readonly Regex ToolFailRegex = new(@"→\s*失败", RegexOptions.Compiled);
+        private static readonly Regex ToolFailRegex = new(@"(?:→\s*失败|·\s*失败)", RegexOptions.Compiled);
         private static readonly Regex ToolOutputRegex = new(@"^\s+(输出|data|error)\s*:.*$", RegexOptions.Compiled | RegexOptions.Multiline);
         private static readonly Regex AttachmentHeaderRegex = new(@"^【附件\s+[^】]*】\r?$", RegexOptions.Compiled | RegexOptions.Multiline);
         private static readonly Regex ReasoningMarkRegex = new(@"^🧠\s*(?<text>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
-        /// <summary>思考区可折叠块的首行：附件标题 / 🧠 思考标记 / » 工具轨迹行。</summary>
-        private static readonly Regex FoldableStartRegex = new(@"^(【附件\s+[^】]*】|🧠|»)", RegexOptions.Compiled | RegexOptions.Multiline);
+        /// <summary>思考区可折叠块的首行：附件标题 / 🧠 思考标记 / » 旧格式工具轨迹行 / 新格式工具行。</summary>
+        private static readonly Regex FoldableStartRegex = new(@"^(【附件\s+[^】]*】|🧠|»|[A-Za-z_][\w\-\.]*\()", RegexOptions.Compiled | RegexOptions.Multiline);
 
         /// <summary>提示词块行首的 markdown 引用号（模型常用 &gt; 逐行标注提示词）。</summary>
         private static readonly Regex BlockquoteLineRegex = new(@"^>\s?", RegexOptions.Compiled);
@@ -210,6 +212,7 @@ namespace ChatFlow
                 if (string.IsNullOrEmpty(text)) return;
 
                 range.SetStyle(ToolCallStyle, ToolCallRegex);
+                range.SetStyle(ToolCallStyle, ToolNameRegex);
                 range.SetStyle(ToolOkStyle, ToolOkRegex);
                 range.SetStyle(ToolFailStyle, ToolFailRegex);
                 range.SetStyle(ToolOutputStyle, ToolOutputRegex);
