@@ -28,9 +28,8 @@ namespace ChatFlow
         private readonly RowTextBox txt;         // 正文
         private readonly RowTextBox txtThinking; // 思考区（可折叠，展开时显示在正文上方）
 #if NET8_0_OR_GREATER
-        private readonly MarkdownRowTextBox md;  // 正文 markdown 渲染（判定为 markdown 时替代 txt）
-        private readonly Panel _mdWrap;          // md 的外壳：左侧露出与 FCTB 边框色一致的边距
-        private readonly List<RowTextBox> _codeBoxes = new(); // markdown 模式下的围栏代码段（FCTB 按语言渲染）
+        // markdown 正文按原文顺序切成块：散文→MarkdownTextBox，围栏代码→等宽 FCTB（按语言高亮），纵向排列
+        private readonly List<MarkdownBlock> _blocks = new();
 #endif
         private bool markdownMode;
         private readonly ChatActionButton btnUndo;
@@ -142,41 +141,6 @@ namespace ChatFlow
             txt.ContextMenuRequested += p => owner.ShowChatMenu(Item, p);
             txtThinking.ContextMenuRequested += p => owner.ShowChatMenu(Item, p);
 
-#if NET8_0_OR_GREATER
-            md = new MarkdownRowTextBox
-            {
-                Visible = false,
-                TabStop = false,
-                BackColor = owner.BackColor,
-            };
-            md.MouseWheelForwarded += (delta, ctrl) => owner.ForwardWheel(delta, ctrl);
-            md.MouseUp += (_, e) =>
-            {
-                if (e.Button == MouseButtons.Right)
-                    owner.ShowChatMenu(Item, md.PointToScreen(e.Location));
-            };
-            HookActions(md);
-
-            _mdWrap = new Panel
-            {
-                Visible = false,
-                TabStop = false,
-                BackColor = owner.BackColor,
-            };
-            //竖线：与 FCTB 的 LeftIndentLine 同位（LeftIndent-7，96DPI 像素）、同色（Silver）
-            _mdWrap.Paint += (_, e) =>
-            {
-                using var pen = new Pen(Color.Silver);
-                int lx = _mdWrap.Width - 7;
-                e.Graphics.DrawLine(pen, lx, 0, lx, _mdWrap.Height - 1);
-            };
-            _mdWrap.MouseUp += (_, e) =>
-            {
-                if (e.Button == MouseButtons.Right)
-                    owner.ShowChatMenu(Item, _mdWrap.PointToScreen(e.Location));
-            };
-#endif
-
             btnUndo = new ChatActionButton(ChatActionKind.Undo) { Visible = false, TabStop = false, Cursor = Cursors.Hand };
             btnCopy = new ChatActionButton(ChatActionKind.Copy) { Visible = false, TabStop = false, Cursor = Cursors.Hand };
             btnUndo.Click += (_, _) => { HideActions(); owner.RequestUndo(Item); };
@@ -199,10 +163,6 @@ namespace ChatFlow
             Controls.Add(lblThinking);
             Controls.Add(txtThinking);
             Controls.Add(txt);
-#if NET8_0_OR_GREATER
-            Controls.Add(_mdWrap);
-            Controls.Add(md);
-#endif
             Controls.Add(btnUndo);
             Controls.Add(btnCopy);
         }
@@ -241,11 +201,6 @@ namespace ChatFlow
             if (useMarkdown)
             {
 #if NET8_0_OR_GREATER
-                md.BackColor = owner.BackColor;
-                md.ForeColor = P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
-                md.Font = new Font(font, font.Style);
-                md.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace) - Dip(FoldGutterWidth));
-                _ = md.Handle;
                 BindMarkdownSegments(item.Text, font, reservedWidth);
 #endif
             }
@@ -314,81 +269,133 @@ namespace ChatFlow
         }
 
 #if NET8_0_OR_GREATER
-        /// <summary>markdown 模式绑定：围栏代码段用等宽字体 FCTB 按语言渲染，其余散文交给 MarkdownTextBox。</summary>
+        /// <summary>markdown 模式绑定：散文与围栏代码段按原文顺序各成一块，散文交给 MarkdownTextBox，
+        /// 代码交给等宽 FCTB（按语言高亮）。块按索引池化复用，块类型变了才重建。</summary>
         private void BindMarkdownSegments(string text, Font font, int reservedWidth)
         {
             var segments = ChatMarkdown.SplitSegments(text);
-            var prose = segments.Where(s => !s.IsCode).Select(s => s.Content).ToList();
-            md.SetMarkdown(string.Join("\n\n", prose));
-
-            // 复用已有的代码段 FCTB（池化按索引对应，多余的移除，不足的新建）
-            int codeCount = segments.Count(s => s.IsCode);
-            while (_codeBoxes.Count > codeCount)
+            while (_blocks.Count > segments.Count) RemoveBlockAt(_blocks.Count - 1);
+            for (int i = 0; i < segments.Count; i++)
             {
-                var last = _codeBoxes[^1];
-                _codeBoxes.RemoveAt(_codeBoxes.Count - 1);
-                Controls.Remove(last);
-                last.Dispose();
+                bool isCode = segments[i].IsCode;
+                if (i < _blocks.Count && _blocks[i].IsCode != isCode) RemoveBlockAt(i);
+                if (i >= _blocks.Count) _blocks.Insert(i, isCode ? CreateCodeBlock() : CreateProseBlock());
             }
-            foreach (var box in _codeBoxes) box.Visible = true;
 
-            int idx = 0;
-            foreach (var (isCode, content, lang) in segments)
+            for (int i = 0; i < segments.Count; i++)
             {
-                if (!isCode) continue;
-                var box = idx < _codeBoxes.Count ? _codeBoxes[idx] : null;
-                if (box == null)
+                var (isCode, content, lang) = segments[i];
+                var block = _blocks[i];
+                if (isCode)
                 {
-                    box = CreateCodeBox();
-                    _codeBoxes.Add(box);
-                    Controls.Add(box);
-                }
-                idx++;
-                box.BackColor = owner.BackColor;
-                box.Font = new Font(CodeFontFamily, font.Size, font.Style);
-                box.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
-                _ = box.Handle; // 强制创建句柄：RecalcWordWrap 仅在 Created 时执行
-                var language = FastColoredTextBoxNS.Text.LanguageDetector.StringToLanguage(lang ?? "");
-                if (box.Language != language)
-                {
-                    box.Language = language; // setter 内部重建样式并整段重算
+                    var box = block.Code;
+                    box.BackColor = owner.BackColor;
+                    box.Font = new Font(CodeFontFamily, font.Size, font.Style);
+                    box.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
+                    _ = box.Handle; // 强制创建句柄：RecalcWordWrap 仅在 Created 时执行
+                    var language = FastColoredTextBoxNS.Text.LanguageDetector.StringToLanguage(lang ?? "");
+                    if (box.Language != language) box.Language = language; // setter 内部重建样式并整段重算
                     box.Text = content;
+                    box.NeedRecalc(true, true);
                 }
                 else
                 {
-                    box.Text = content;
+                    var prose = block.Prose;
+                    prose.BackColor = owner.BackColor;
+                    prose.ForeColor = P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
+                    prose.Font = new Font(font, font.Style);
+                    prose.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace) - Dip(FoldGutterWidth));
+                    _ = prose.Handle;
+                    prose.SetMarkdown(content);
                 }
-                box.NeedRecalc(true, true);
             }
         }
 
-        private RowTextBox CreateCodeBox() => new()
+        private MarkdownBlock CreateCodeBlock()
         {
-            ReadOnly = true,
-            ShowScrollBars = false,
-            WordWrap = true,
-            ShowLineNumbers = false,
-            TextAreaBorder = TextAreaBorderType.None,
-            Paddings = new Padding(Dip(2)),
-            LeftPadding = Dip(FoldGutterWidth),
-            UseCJK = CJKMode.Hanzi,
-            TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit,
-            Visible = false,
-            TabStop = false,
-        };
+            var box = new RowTextBox
+            {
+                ReadOnly = true,
+                ShowScrollBars = false,
+                WordWrap = true,
+                ShowLineNumbers = false,
+                TextAreaBorder = TextAreaBorderType.None,
+                Paddings = new Padding(Dip(2)),
+                LeftPadding = Dip(FoldGutterWidth),
+                UseCJK = CJKMode.Hanzi,
+                TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit,
+                Visible = false,
+                TabStop = false,
+            };
+            box.MouseWheelForwarded += (delta, ctrl) => owner.ForwardWheel(delta, ctrl);
+            HookActions(box);
+            Controls.Add(box);
+            return new MarkdownBlock { Code = box };
+        }
+
+        private MarkdownBlock CreateProseBlock()
+        {
+            var prose = new MarkdownRowTextBox
+            {
+                Visible = false,
+                TabStop = false,
+                BackColor = owner.BackColor,
+            };
+            prose.MouseWheelForwarded += (delta, ctrl) => owner.ForwardWheel(delta, ctrl);
+            prose.MouseUp += (_, e) =>
+            {
+                if (e.Button == MouseButtons.Right)
+                    owner.ShowChatMenu(Item, prose.PointToScreen(e.Location));
+            };
+            HookActions(prose);
+
+            //竖线：与 FCTB 的 LeftIndentLine 同位（LeftIndent-7，96DPI 像素）、同色（Silver）
+            var wrap = new Panel
+            {
+                Visible = false,
+                TabStop = false,
+                BackColor = owner.BackColor,
+            };
+            wrap.Paint += (_, e) =>
+            {
+                using var pen = new Pen(Color.Silver);
+                int lx = wrap.Width - 7;
+                e.Graphics.DrawLine(pen, lx, 0, lx, wrap.Height - 1);
+            };
+            wrap.MouseUp += (_, e) =>
+            {
+                if (e.Button == MouseButtons.Right)
+                    owner.ShowChatMenu(Item, wrap.PointToScreen(e.Location));
+            };
+
+            Controls.Add(wrap);
+            Controls.Add(prose);
+            return new MarkdownBlock { Prose = prose, Wrap = wrap };
+        }
+
+        private void RemoveBlockAt(int index)
+        {
+            var block = _blocks[index];
+            _blocks.RemoveAt(index);
+            Controls.Remove(block.Box);
+            block.Box.Dispose();
+            if (block.Wrap == null) return;
+            Controls.Remove(block.Wrap);
+            block.Wrap.Dispose();
+        }
 #endif
 
         private int MarkdownContentHeight()
         {
 #if NET8_0_OR_GREATER
-            int start = md.SelectionStart;
-            int length = md.SelectionLength;
-            int height = md.GetPreferredContentHeight();
-            md.Select(start, length);
-            height += Dip(4);
-            foreach (var box in _codeBoxes)
-                if (box.Visible)
-                    height += box.TextHeight + box.Paddings.Vertical + Dip(4);
+            int height = Dip(4);
+            foreach (var block in _blocks)
+            {
+                if (!block.Box.Visible) continue;
+                height += (block.IsCode
+                    ? block.Code.TextHeight + block.Code.Paddings.Vertical
+                    : block.Prose.GetPreferredContentHeight()) + Dip(4);
+            }
             return height;
 #else
             return 0;
@@ -400,9 +407,11 @@ namespace ChatFlow
             markdownMode = show;
             txt.Visible = !show;
 #if NET8_0_OR_GREATER
-            md.Visible = show;
-            _mdWrap.Visible = show;
-            foreach (var box in _codeBoxes) box.Visible = show;
+            foreach (var block in _blocks)
+            {
+                block.Box.Visible = show;
+                if (block.Wrap != null) block.Wrap.Visible = show;
+            }
 #endif
         }
 
@@ -411,8 +420,9 @@ namespace ChatFlow
             txt.SetFontPreserveZoom(font);
             if (txtThinking.Visible) txtThinking.SetFontPreserveZoom(GetThinkingFont(font));
 #if NET8_0_OR_GREATER
-            foreach (var box in _codeBoxes)
-                box.SetFontPreserveZoom(new Font(CodeFontFamily, font.Size, font.Style));
+            foreach (var block in _blocks)
+                if (block.IsCode)
+                    block.Code.SetFontPreserveZoom(new Font(CodeFontFamily, font.Size, font.Style));
 #endif
         }
 
@@ -436,9 +446,10 @@ namespace ChatFlow
         internal RowTextBox ThinkingBox => txtThinking;
         internal bool IsMarkdownRendered => markdownMode;
 #if NET8_0_OR_GREATER
-        internal Control MarkdownBox => md;
-        internal Control MarkdownWrap => _mdWrap;
-        internal IReadOnlyList<RowTextBox> CodeBoxes => _codeBoxes;
+        internal Control MarkdownBox => FirstProse?.Prose;
+        internal Control MarkdownWrap => FirstProse?.Wrap;
+        internal IReadOnlyList<RowTextBox> CodeBoxes => _blocks.Where(b => b.IsCode).Select(b => b.Code).ToList();
+        private MarkdownBlock FirstProse => _blocks.FirstOrDefault(b => !b.IsCode);
 #endif
 
         /// <summary>流式更新思考区文本（可见性/摘要/展开内容变化后主动重布局）。</summary>
@@ -528,7 +539,9 @@ namespace ChatFlow
         public string GetSelectedText()
         {
 #if NET8_0_OR_GREATER
-            if (markdownMode) return md.SelectedText;
+            if (markdownMode)
+                return string.Join("\n", _blocks.Where(b => !b.IsCode)
+                    .Select(b => b.Prose.SelectedText).Where(t => t.Length > 0));
 #endif
             return txt.SelectedText;
         }
@@ -596,8 +609,12 @@ namespace ChatFlow
                 actionHide.Stop();
                 actionHide.Dispose();
 #if NET8_0_OR_GREATER
-                foreach (var box in _codeBoxes) box.Dispose();
-                _codeBoxes.Clear();
+                foreach (var block in _blocks)
+                {
+                    block.Box.Dispose();
+                    block.Wrap?.Dispose();
+                }
+                _blocks.Clear();
 #endif
             }
             base.Dispose(disposing);
@@ -632,26 +649,30 @@ namespace ChatFlow
             int bodyH = Math.Max(Dip(20), Height - y - Dip(RowVPad) / 2);
             txt.SetBounds(0, y, bodyW, bodyH);
 #if NET8_0_OR_GREATER
-            _mdWrap.SetBounds(0, y, Dip(FoldGutterWidth), bodyH);
-            md.SetBounds(Dip(FoldGutterWidth), y, Math.Max(Dip(20), bodyW - Dip(FoldGutterWidth)), bodyH);
-            _mdWrap.BringToFront();
-            md.BringToFront();
-            // markdown 模式下 md 与代码段 FCTB 纵向堆叠（各自高度=内容高度）
+            // markdown 模式下各块（散文 / 代码）按原文顺序纵向堆叠，各自高度=内容高度
             if (markdownMode)
             {
                 int stackY = y;
-                int boxW = Math.Max(Dip(20), bodyW - Dip(FoldGutterWidth));
-                int mdH = Math.Max(Dip(10), md.GetPreferredContentHeight() + Dip(4));
-                md.SetBounds(Dip(FoldGutterWidth), stackY, boxW, mdH);
-                stackY += mdH;
-                foreach (var box in _codeBoxes)
+                int proseW = Math.Max(Dip(20), bodyW - Dip(FoldGutterWidth));
+                foreach (var block in _blocks)
                 {
-                    if (!box.Visible) continue;
-                    box.SetBounds(0, stackY, bodyW, Math.Max(Dip(10), box.TextHeight + box.Paddings.Vertical + Dip(4)));
-                    stackY += box.Height + Dip(4);
-                    box.BringToFront();
+                    if (!block.Box.Visible) continue;
+                    int h = block.IsCode
+                        ? Math.Max(Dip(10), block.Code.TextHeight + block.Code.Paddings.Vertical + Dip(4))
+                        : Math.Max(Dip(10), block.Prose.GetPreferredContentHeight() + Dip(4));
+                    if (block.IsCode)
+                    {
+                        block.Code.SetBounds(0, stackY, bodyW, h);
+                    }
+                    else
+                    {
+                        block.Wrap.SetBounds(0, stackY, Dip(FoldGutterWidth), h);
+                        block.Prose.SetBounds(Dip(FoldGutterWidth), stackY, proseW, h);
+                        block.Wrap.BringToFront();
+                    }
+                    block.Box.BringToFront();
+                    stackY += h + Dip(4);
                 }
-                _mdWrap.SetBounds(0, y, Dip(FoldGutterWidth), Math.Max(Dip(10), stackY - y));
             }
 #endif
 
@@ -670,19 +691,22 @@ namespace ChatFlow
             btnUndo.BackColor = owner.BackColor;
             btnCopy.BackColor = owner.BackColor;
 
-            if (markdownMode)
-            {
-#if NET8_0_OR_GREATER
-                md.BringToFront();
-#endif
-            }
-            else
-            {
-                txt.BringToFront();
-            }
+            if (!markdownMode) txt.BringToFront();
             btnUndo.BringToFront();
             btnCopy.BringToFront();
         }
+
+#if NET8_0_OR_GREATER
+        /// <summary>markdown 正文中的一个块：散文（MarkdownTextBox + 左侧竖线壳）或围栏代码段（等宽 FCTB）。</summary>
+        private sealed class MarkdownBlock
+        {
+            public RowTextBox Code;
+            public MarkdownRowTextBox Prose;
+            public Panel Wrap;
+            public bool IsCode => Code != null;
+            public Control Box => (Control)Code ?? Prose;
+        }
+#endif
     }
 
     /// <FCTB 子类：滚轮全部转发父容器，禁止行内滚动/缩放。</summary>

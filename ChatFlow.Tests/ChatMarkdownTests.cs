@@ -140,6 +140,38 @@ namespace ChatFlow.Tests
         }
     }
 
+    [StaFact]
+    public void Bind_MarkdownRow_KeepsCodeBlockInPlace()
+    {
+        using var flow = new ChatFlowControl();
+        using var row = new ChatMessageRow(flow);
+        var font = new System.Drawing.Font("Consolas", 9.75F);
+        using var host = new WF.Form();
+        host.Controls.Add(row);
+        host.Show();
+        try
+        {
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "问"),
+                Assistant = new ChatMessage("assistant", "前文\n\n```csharp\nint x = 1;\n```\n\n后文"),
+            };
+            row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.Assistant), font, 600);
+
+            var code = Assert.Single(row.CodeBoxes);
+            var prose = row.Controls.OfType<MarkdownRowTextBox>().OrderBy(c => c.Top).ToList();
+            Assert.Equal(2, prose.Count);
+            // 代码块留在原文位置：前文 → 代码 → 后文
+            Assert.True(prose[0].Top + prose[0].Height <= code.Top + 1);
+            Assert.True(code.Top + code.Height <= prose[1].Top + 1);
+        }
+        finally
+        {
+            font.Dispose();
+            host.Hide();
+        }
+    }
+
     [Theory]
     [InlineData("```csharp\nint x;\n```", 1, "csharp")]
     [InlineData("说明\n```py\nx=1\n```\n尾", 1, "py")]
