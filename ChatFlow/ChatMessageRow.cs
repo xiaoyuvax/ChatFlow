@@ -20,6 +20,8 @@ namespace ChatFlow
         private const int ActionGap = 4;        // 两个按钮间距
         private const int ActionZoneW = 132;    // 右下角悬停感应区宽
         private const int ActionZoneH = 40;     // 右下角悬停感应区高
+        /// <summary>markdown 模式下代码段的等宽字体（正文字体同字号）。</summary>
+        internal static readonly string CodeFontFamily = "Consolas";
         private readonly CheckBox chk;
         private readonly Label lblRole;
         private readonly Label lblThinking;     // 思考区折叠/展开头（无思考区时隐藏）
@@ -28,6 +30,7 @@ namespace ChatFlow
 #if NET8_0_OR_GREATER
         private readonly MarkdownRowTextBox md;  // 正文 markdown 渲染（判定为 markdown 时替代 txt）
         private readonly Panel _mdWrap;          // md 的外壳：左侧露出与 FCTB 边框色一致的边距
+        private readonly List<RowTextBox> _codeBoxes = new(); // markdown 模式下的围栏代码段（FCTB 按语言渲染）
 #endif
         private bool markdownMode;
         private readonly ChatActionButton btnUndo;
@@ -243,7 +246,7 @@ namespace ChatFlow
                 md.Font = new Font(font, font.Style);
                 md.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace) - Dip(FoldGutterWidth));
                 _ = md.Handle;
-                md.SetMarkdown(item.Text);
+                BindMarkdownSegments(item.Text, font, reservedWidth);
 #endif
             }
             else
@@ -310,6 +313,71 @@ namespace ChatFlow
             return contentH + Dip(RoleIndent) + Dip(2) + Dip(RowVPad);
         }
 
+#if NET8_0_OR_GREATER
+        /// <summary>markdown 模式绑定：围栏代码段用等宽字体 FCTB 按语言渲染，其余散文交给 MarkdownTextBox。</summary>
+        private void BindMarkdownSegments(string text, Font font, int reservedWidth)
+        {
+            var segments = ChatMarkdown.SplitSegments(text);
+            var prose = segments.Where(s => !s.IsCode).Select(s => s.Content).ToList();
+            md.SetMarkdown(string.Join("\n\n", prose));
+
+            // 复用已有的代码段 FCTB（池化按索引对应，多余的移除，不足的新建）
+            int codeCount = segments.Count(s => s.IsCode);
+            while (_codeBoxes.Count > codeCount)
+            {
+                var last = _codeBoxes[^1];
+                _codeBoxes.RemoveAt(_codeBoxes.Count - 1);
+                Controls.Remove(last);
+                last.Dispose();
+            }
+            foreach (var box in _codeBoxes) box.Visible = true;
+
+            int idx = 0;
+            foreach (var (isCode, content, lang) in segments)
+            {
+                if (!isCode) continue;
+                var box = idx < _codeBoxes.Count ? _codeBoxes[idx] : null;
+                if (box == null)
+                {
+                    box = CreateCodeBox();
+                    _codeBoxes.Add(box);
+                    Controls.Add(box);
+                }
+                idx++;
+                box.BackColor = owner.BackColor;
+                box.Font = new Font(CodeFontFamily, font.Size, font.Style);
+                box.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
+                _ = box.Handle; // 强制创建句柄：RecalcWordWrap 仅在 Created 时执行
+                var language = FastColoredTextBoxNS.Text.LanguageDetector.StringToLanguage(lang ?? "");
+                if (box.Language != language)
+                {
+                    box.Language = language; // setter 内部重建样式并整段重算
+                    box.Text = content;
+                }
+                else
+                {
+                    box.Text = content;
+                }
+                box.NeedRecalc(true, true);
+            }
+        }
+
+        private RowTextBox CreateCodeBox() => new()
+        {
+            ReadOnly = true,
+            ShowScrollBars = false,
+            WordWrap = true,
+            ShowLineNumbers = false,
+            TextAreaBorder = TextAreaBorderType.None,
+            Paddings = new Padding(Dip(2)),
+            LeftPadding = Dip(FoldGutterWidth),
+            UseCJK = CJKMode.Hanzi,
+            TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit,
+            Visible = false,
+            TabStop = false,
+        };
+#endif
+
         private int MarkdownContentHeight()
         {
 #if NET8_0_OR_GREATER
@@ -317,7 +385,11 @@ namespace ChatFlow
             int length = md.SelectionLength;
             int height = md.GetPreferredContentHeight();
             md.Select(start, length);
-            return height + Dip(4);
+            height += Dip(4);
+            foreach (var box in _codeBoxes)
+                if (box.Visible)
+                    height += box.TextHeight + box.Paddings.Vertical + Dip(4);
+            return height;
 #else
             return 0;
 #endif
@@ -330,6 +402,7 @@ namespace ChatFlow
 #if NET8_0_OR_GREATER
             md.Visible = show;
             _mdWrap.Visible = show;
+            foreach (var box in _codeBoxes) box.Visible = show;
 #endif
         }
 
@@ -337,6 +410,10 @@ namespace ChatFlow
         {
             txt.SetFontPreserveZoom(font);
             if (txtThinking.Visible) txtThinking.SetFontPreserveZoom(GetThinkingFont(font));
+#if NET8_0_OR_GREATER
+            foreach (var box in _codeBoxes)
+                box.SetFontPreserveZoom(new Font(CodeFontFamily, font.Size, font.Style));
+#endif
         }
 
         /// <summary>思考区专用字体：比正文小一号、斜体，与正式答复明确区分。</summary>
@@ -361,6 +438,7 @@ namespace ChatFlow
 #if NET8_0_OR_GREATER
         internal Control MarkdownBox => md;
         internal Control MarkdownWrap => _mdWrap;
+        internal IReadOnlyList<RowTextBox> CodeBoxes => _codeBoxes;
 #endif
 
         /// <summary>流式更新思考区文本（可见性/摘要/展开内容变化后主动重布局）。</summary>
@@ -517,6 +595,10 @@ namespace ChatFlow
             {
                 actionHide.Stop();
                 actionHide.Dispose();
+#if NET8_0_OR_GREATER
+                foreach (var box in _codeBoxes) box.Dispose();
+                _codeBoxes.Clear();
+#endif
             }
             base.Dispose(disposing);
         }
@@ -554,6 +636,23 @@ namespace ChatFlow
             md.SetBounds(Dip(FoldGutterWidth), y, Math.Max(Dip(20), bodyW - Dip(FoldGutterWidth)), bodyH);
             _mdWrap.BringToFront();
             md.BringToFront();
+            // markdown 模式下 md 与代码段 FCTB 纵向堆叠（各自高度=内容高度）
+            if (markdownMode)
+            {
+                int stackY = y;
+                int boxW = Math.Max(Dip(20), bodyW - Dip(FoldGutterWidth));
+                int mdH = Math.Max(Dip(10), md.GetPreferredContentHeight() + Dip(4));
+                md.SetBounds(Dip(FoldGutterWidth), stackY, boxW, mdH);
+                stackY += mdH;
+                foreach (var box in _codeBoxes)
+                {
+                    if (!box.Visible) continue;
+                    box.SetBounds(0, stackY, bodyW, Math.Max(Dip(10), box.TextHeight + box.Paddings.Vertical + Dip(4)));
+                    stackY += box.Height + Dip(4);
+                    box.BringToFront();
+                }
+                _mdWrap.SetBounds(0, y, Dip(FoldGutterWidth), Math.Max(Dip(10), stackY - y));
+            }
 #endif
 
             int size = Dip(ActionSize);

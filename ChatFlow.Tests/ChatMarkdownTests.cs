@@ -105,33 +105,81 @@ namespace ChatFlow.Tests
             }
         }
 
-        [StaFact]
-        public void Bind_KeepsFctbWhileStreaming()
+    [StaFact]
+    public void Bind_MarkdownRow_UsesMonospaceFctbForCodeSegments()
+    {
+        using var flow = new ChatFlowControl();
+        using var row = new ChatMessageRow(flow);
+        var font = new System.Drawing.Font("Consolas", 9.75F);
+        using var host = new WF.Form();
+        host.Controls.Add(row);
+        host.Show();
+        try
         {
-            using var flow = new ChatFlowControl();
-            using var row = new ChatMessageRow(flow);
-            var font = new System.Drawing.Font("Consolas", 9.75F);
-            using var host = new WF.Form();
-            host.Controls.Add(row);
-            host.Show();
-            try
+            var turn = new ChatTurn
             {
-                var turn = new ChatTurn
-                {
-                    User = new ChatMessage("user", "问题"),
-                    Assistant = new ChatMessage("assistant", "**流式中的粗体**"),
-                    Streaming = true,
-                };
-                row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.Assistant), font, 600);
+                User = new ChatMessage("user", "问"),
+                Assistant = new ChatMessage("assistant", "说明如下\n\n```csharp\nint x = 1;\n```\n```json\n{\"a\":1}\n```\n完"),
+            };
+            row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.Assistant), font, 600);
 
-                Assert.False(row.IsMarkdownRendered);
-                Assert.True(row.BodyBox.Visible);
-            }
-            finally
-            {
-                font.Dispose();
-                host.Hide();
-            }
+            Assert.True(row.IsMarkdownRendered);
+            var boxes = row.CodeBoxes;
+            Assert.Equal(2, boxes.Count);
+            Assert.Equal(FastColoredTextBoxNS.Text.Language.CSharp, boxes[0].Language);
+            Assert.Equal(FastColoredTextBoxNS.Text.Language.JSON, boxes[1].Language);
+            Assert.Equal("Consolas", boxes[0].Font.FontFamily.Name);
+            Assert.True(boxes[0].Visible);
+            // 纵向堆叠且不重叠
+            Assert.True(boxes[0].Top + boxes[0].Height <= boxes[1].Top + 1);
+        }
+        finally
+        {
+            font.Dispose();
+            host.Hide();
         }
     }
+
+    [Theory]
+    [InlineData("```csharp\nint x;\n```", 1, "csharp")]
+    [InlineData("说明\n```py\nx=1\n```\n尾", 1, "py")]
+    [InlineData("~~~\nplain\n~~~", 1, "")]
+    [InlineData("没有代码块", 0, null)]
+    public void SplitSegments_SplitsFences(string text, int expectedCodeCount, string lang)
+    {
+        var segments = ChatMarkdown.SplitSegments(text);
+        var codes = segments.Where(s => s.IsCode).ToList();
+        Assert.Equal(expectedCodeCount, codes.Count);
+        if (lang != null) Assert.Equal(lang, codes[0].Lang);
+    }
+
+    [StaFact]
+    public void Bind_KeepsFctbWhileStreaming()
+    {
+        using var flow = new ChatFlowControl();
+        using var row = new ChatMessageRow(flow);
+        var font = new System.Drawing.Font("Consolas", 9.75F);
+        using var host = new WF.Form();
+        host.Controls.Add(row);
+        host.Show();
+        try
+        {
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "问题"),
+                Assistant = new ChatMessage("assistant", "**流式中的粗体**"),
+                Streaming = true,
+            };
+            row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.Assistant), font, 600);
+
+            Assert.False(row.IsMarkdownRendered);
+            Assert.True(row.BodyBox.Visible);
+        }
+        finally
+        {
+            font.Dispose();
+            host.Hide();
+        }
+    }
+}
 }

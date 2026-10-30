@@ -27,5 +27,56 @@ namespace ChatFlow
 
             return listLines >= 2 || Inline.IsMatch(text);
         }
+
+        private static readonly Regex FenceLine = new(@"^ {0,3}(?<fence>`{3,}|~{3,})[ \t]*(?<info>[^`]*)$", RegexOptions.Compiled);
+
+        /// <summary>把 markdown 文本切成「散文段 / 围栏代码段」：散文交 MarkdownTextBox，代码段交 FCTB 按语言渲染。
+        /// 围栏行本身不进入任何段（只作分隔）；未闭合围栏的剩余部分按代码处理（流式半截安全）。</summary>
+        public static List<(bool IsCode, string Content, string Lang)> SplitSegments(string text)
+        {
+            var segments = new List<(bool IsCode, string Content, string Lang)>();
+            var sb = new System.Text.StringBuilder();
+            bool inCode = false;
+            string lang = null;
+            char fenceChar = '\0';
+            int fenceLen = 0;
+
+            void Flush()
+            {
+                if (sb.Length == 0) return;
+                string content = sb.ToString().TrimEnd('\n');
+                if (content.Length > 0) segments.Add((inCode, content, lang));
+                sb.Clear();
+            }
+
+            foreach (string raw in text.Replace("\r\n", "\n").Split('\n'))
+            {
+                Match m = FenceLine.Match(raw);
+                if (!inCode)
+                {
+                    if (m.Success)
+                    {
+                        Flush();
+                        inCode = true;
+                        fenceChar = m.Groups["fence"].Value[0];
+                        fenceLen = m.Groups["fence"].Value.Length;
+                        lang = m.Groups["info"].Value.Trim();
+                        continue;
+                    }
+                }
+                else if (m.Success && m.Groups["fence"].Value[0] == fenceChar
+                         && m.Groups["fence"].Value.Length >= fenceLen
+                         && m.Groups["info"].Value.Trim().Length == 0)
+                {
+                    Flush();
+                    inCode = false;
+                    lang = null;
+                    continue;
+                }
+                sb.Append(raw).Append('\n');
+            }
+            Flush();
+            return segments;
+        }
     }
 }
