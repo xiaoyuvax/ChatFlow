@@ -46,5 +46,37 @@ namespace ChatFlow.Tests
                 host.Dispose();
             }
         }
+
+        [StaFact]
+        public void ScrollToEnd_ReachesBottom_WhenHeightsNeedCorrection()
+        {
+            using var flow = new ChatFlowControl();
+            var book = new ChatTurnBook();
+            var body = string.Join("\n\n",
+                Enumerable.Range(0, 200).Select(i => $"第 {i} 段：用于撑高内容的占位文本，长度要足够换行。"));
+            book.AddTurn(new ChatTurn
+            {
+                User = new ChatMessage("user", "写一篇长文"),
+                Assistant = new ChatMessage("assistant", body),
+                ReasoningText = string.Join("\n", Enumerable.Range(0, 80).Select(i => $"推理第 {i} 行，内容略长一些以触发换行计算。")),
+                ThinkingExpanded = true
+            });
+
+            var host = new Form { Size = new Size(900, 500) };
+            host.Controls.Add(flow);
+            flow.Dock = DockStyle.Fill;
+            host.Show();
+            try
+            {
+                flow.Bind(book);
+                flow.ScrollToEnd();
+                Assert.True(flow.AtEnd, flow.GetLayoutDiagnostics());
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
     }
 }

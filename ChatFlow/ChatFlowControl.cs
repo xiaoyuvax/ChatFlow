@@ -203,6 +203,9 @@ namespace ChatFlow
         /// <summary>是否处于内容末尾（滚动条不可见=内容不足一屏，也算末尾）。</summary>
         private bool IsAtEnd => !vbar.Visible || vbar.Value >= MaxScrollValue;
 
+        /// <summary>当前是否已在内容末尾（滚动跟随/「跳到末尾」按钮的判定条件）。</summary>
+        public bool AtEnd => IsAtEnd;
+
         /// <summary>程序内部改滚动值：不算「用户拖动」，不改变自动跟随状态。
         /// 必须按 MaxValue 上限钳制：控件尚未布局时（高度≈0）LargeChange 只有下限 10，
         /// 直接写 totalHeight-viewH 会越过 ScrollBar 允许的最大值并抛 ArgumentOutOfRangeException。</summary>
@@ -216,6 +219,7 @@ namespace ChatFlow
         /// <summary>滚动值变化：非程序设置（用户拖滚动条/滚轮）时按是否在末尾决定自动跟随；并刷新浮动按钮。</summary>
         private void vbar_ValueChanged(object sender, EventArgs e)
         {
+            if (updatingBar) return;   // UpdateScrollbar 内部改范围触发的回调：不重排、不改跟随状态
             if (!settingScrollInternally) autoScrollToEnd = IsAtEnd;
             Relayout();
             UpdateJumpToEndButton();
@@ -426,6 +430,25 @@ namespace ChatFlow
         }
 
         private void UpdateScrollbar()
+        {
+            // 防重入：下面把 LargeChange 改小/改大时原生控件会钳制当前位置并触发 ValueChanged，
+            // 那条链会同步跑一遍重排、把 totalHeight 改掉；若继续用进函数时算出的 maxScroll 设
+            // Maximum，滚动上限就永远比真实末尾小一截（表现为"追不上流式输出、跳到末尾无效"）。
+            if (updatingBar) return;
+            updatingBar = true;
+            try
+            {
+                UpdateScrollbarCore();
+            }
+            finally
+            {
+                updatingBar = false;
+            }
+        }
+
+        private bool updatingBar;
+
+        private void UpdateScrollbarCore()
         {
             int visibleH = Math.Max(1, ClientSize.Height);
             bool needBar = totalHeight > visibleH;
