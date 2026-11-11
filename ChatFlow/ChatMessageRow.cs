@@ -40,6 +40,11 @@ namespace ChatFlow
 
         private bool _binding;
         private int _contentWidth;               // 正文可用宽度（Bind 传入的宽度，避免复用行时用到旧 Width）
+        // 上一次真正渲染进 FCTB 的输入（文本|字体|宽度|渲染方式）。相同就跳过重设文本与重算换行：
+        // 每轮 RebuildItems 都会给所有可见行重新 Bind，不跳过的话 1 万字一行要重算 ~30ms。
+        private string _bodyKey;
+        private string _thinkingKey;
+        private bool bodyShown;                  // 正文有文字才占行：没字时只剩角色栏/思考区，不留空白文本框
         private bool thinkingVisible;            // 当前条目是否有思考区
         private bool thinkingHeaderShown;        // 是否显示折叠头（后续分片不显示）
         private bool thinkingBoxShown;           // 是否显示思考区文本（不用 Control.Visible：行在池里时父级不可见会误判）
@@ -216,6 +221,13 @@ namespace ChatFlow
             Controls.Add(btnCopy);
         }
 
+        /// <summary>主题/样式整体换过：丢掉文本渲染缓存，下一次 Bind 必须重新上色（文本本身没变时会被跳过）。</summary>
+        internal void InvalidateBindCache()
+        {
+            _bodyKey = null;
+            _thinkingKey = null;
+        }
+
         /// <summary>绑定数据（池化复用时调用）。返回该行实际需要的高度（含角色栏与留白）。
         /// 测量基于本行 FCTB 真实渲染（句柄已创建，WordWrap 生效）。</summary>
         public int Bind(ChatFlowItem item, Font font, int reservedWidth)
@@ -249,6 +261,8 @@ namespace ChatFlow
 #endif
             // 提示词块整段缩进后再上样式（缩进只作用于显示文本，模型原文不动）
             string body = ChatTextStyler.IndentPromptBlocks(item.Text);
+            string bodyKey = (useMarkdown ? "md|" : "txt|") + font + "|" + _contentWidth + "|" + body;
+            bool bodyChanged = bodyKey != _bodyKey;
             if (useMarkdown)
             {
 #if NET8_0_OR_GREATER
@@ -257,16 +271,21 @@ namespace ChatFlow
                 md.Font = new Font(font, font.Style);
                 md.Width = Math.Max(Dip(20), _contentWidth - Dip(FoldGutterWidth));
                 _ = md.Handle;
-                BindMarkdownSegments(item.Text, font, reservedWidth);
+                if (bodyChanged) BindMarkdownSegments(item.Text, font, reservedWidth);
 #endif
             }
             else
             {
-                txt.SetFontPreserveZoom(font);
-                txt.SetTextCaretEnd(body);
-                ChatTextStyler.ApplyBody(txt, body);
+                if (bodyChanged)
+                {
+                    txt.SetFontPreserveZoom(font);
+                    txt.SetTextCaretEnd(body);
+                    ChatTextStyler.ApplyBody(txt, body);
+                }
             }
+            _bodyKey = bodyKey;
             ShowMarkdown(useMarkdown);
+            bodyShown = !string.IsNullOrEmpty(item.Text);
             chk.Checked = item.Turn.Selected;
             chk.Visible = _showSelection;
             txt.BackColor = owner.BackColor;
@@ -285,39 +304,53 @@ namespace ChatFlow
                 ? "▼ " + item.ThinkingHeaderText + "（点击折叠）"
                 : "▶ " + item.ThinkingHeaderText + "（点击展开）";
             lblThinking.ForeColor = P != null ? P.ForeDim : Color.Gray;
-            if (thinkingBoxShown && item.ThinkingText != null)
+            string thinkingKey = (thinkingBoxShown ? "1|" : "0|") + font + "|" + _contentWidth + "|" + (item.ThinkingText ?? "");
+            bool thinkingChanged = thinkingKey != _thinkingKey;
+            if (thinkingBoxShown && item.ThinkingText != null && thinkingChanged)
             {
                 txtThinking.SetFontPreserveZoom(GetThinkingFont(font));
                 txtThinking.SetTextCaretEnd(item.ThinkingText);
                 ChatTextStyler.ApplyThinking(txtThinking, item.ThinkingText);
                 txtThinking.ContextMenuStrip = owner.ContextMenuStrip;
             }
+            if (thinkingBoxShown) _thinkingKey = thinkingKey;
             txtThinking.Visible = thinkingBoxShown;
             _binding = false;
 
-            // 真实测量：本行在最终宽度下换行后的内容高度
+            // 真实测量：本行在最终宽度下换行后的内容高度（文本没变就沿用上次排版，别重算）
             if (!markdownMode)
             {
                 txt.Width = _contentWidth;
-                _ = txt.Handle; // 强制创建句柄：FCTB 的 RecalcWordWrap 仅在 Created 时执行，否则换行被推迟
-                txt.NeedRecalc(true, true);
+                if (bodyChanged)
+                {
+                    _ = txt.Handle; // 强制创建句柄：FCTB 的 RecalcWordWrap 仅在 Created 时执行，否则换行被推迟
+                    txt.NeedRecalc(true, true);
+                }
             }
             if (thinkingBoxShown)
             {
                 txtThinking.Width = _contentWidth;
-                _ = txtThinking.Handle;
-                txtThinking.NeedRecalc(true, true);
+                if (thinkingChanged)
+                {
+                    _ = txtThinking.Handle;
+                    txtThinking.NeedRecalc(true, true);
+                }
             }
             LayoutContent(); // 主动布局：复用行尺寸未变时 OnSizeChanged 不触发，靠这里刷新子控件位置
             return MeasureRow();
         }
 
+        /// <summary>正文内容高度；没有文字时为 0（不渲染空白文本框）。</summary>
+        private int BodyContentHeight()
+            => !bodyShown ? 0
+                : markdownMode
+                    ? MarkdownContentHeight()
+                    : txt.TextHeight + txt.Paddings.Vertical + Dip(4);
+
         /// <summary>本行所需高度（含角色栏与留白）；布局测量唯一出口。</summary>
         private int MeasureRow()
         {
-            int contentH = markdownMode
-                ? MarkdownContentHeight()
-                : txt.TextHeight + txt.Paddings.Vertical + Dip(4);
+            int contentH = BodyContentHeight();
             if (thinkingHeaderShown)
             {
                 contentH += Dip(ThinkingHeaderH); // 折叠头始终占高（折叠时也显示）
@@ -342,9 +375,7 @@ namespace ChatFlow
         /// 不能按视口高度封顶——那样普通长度的思维链也会白白出现内部滚动条。</summary>
         private int ThinkingBoxHeight()
         {
-            int body = markdownMode
-                ? MarkdownContentHeight()
-                : txt.TextHeight + txt.Paddings.Vertical + Dip(4);
+            int body = BodyContentHeight();
             int room = Math.Max(Dip(120), MaxRowHeightPx - body - Dip(ThinkingHeaderH) - Dip(RowVPad) - Dip(RoleIndent));
             return Math.Min(ThinkingNeedHeight(), room);
         }
@@ -699,7 +730,7 @@ namespace ChatFlow
                 y += th + Dip(4);
             }
             int bodyW = Math.Max(Dip(20), contentW);
-            int bodyH = Math.Max(Dip(20), Height - y - Dip(RowVPad) / 2);
+            int bodyH = bodyShown ? Math.Max(Dip(20), Height - y - Dip(RowVPad) / 2) : 0;
             txt.SetBounds(0, y, bodyW, bodyH);
 #if NET8_0_OR_GREATER
             _mdWrap.SetBounds(0, y, Dip(FoldGutterWidth), bodyH);
@@ -980,23 +1011,25 @@ namespace ChatFlow
 
         private void DrawIcon(Graphics g, Color color)
         {
+            // 按钮边长按 DPI 放大（Dip(24)），图标几何也跟着放大：硬编码像素在高 DPI 下会缩成按钮的 1/6
+            float k = DeviceDpi / 96f;
             float cx = Width / 2f;
             float cy = Height / 2f;
-            using var pen = new Pen(color, 1.6f);
+            using var pen = new Pen(color, 1.6f * k);
             if (Kind == ChatActionKind.Copy)
             {
-                g.DrawRectangle(pen, cx - 5, cy - 5, 7, 9);
-                g.DrawRectangle(pen, cx - 1, cy - 1, 7, 9);
+                g.DrawRectangle(pen, cx - 6 * k, cy - 7 * k, 8 * k, 10 * k);
+                g.DrawRectangle(pen, cx - 2 * k, cy - 3 * k, 8 * k, 10 * k);
                 return;
             }
 
-            g.DrawArc(pen, cx - 5, cy - 5, 10, 10, 35, 285);
+            g.DrawArc(pen, cx - 6 * k, cy - 6 * k, 12 * k, 12 * k, 35, 285);
             using var brush = new SolidBrush(color);
             g.FillPolygon(brush,
             [
-                new PointF(cx - 0.5f, cy - 6.5f),
-                new PointF(cx - 5.5f, cy - 4.5f),
-                new PointF(cx - 1.5f, cy - 1.5f)
+                new PointF(cx - 0.6f * k, cy - 7.8f * k),
+                new PointF(cx - 6.6f * k, cy - 5.4f * k),
+                new PointF(cx - 1.8f * k, cy - 1.8f * k)
             ]);
         }
 

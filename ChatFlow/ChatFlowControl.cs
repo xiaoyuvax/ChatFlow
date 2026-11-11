@@ -286,7 +286,10 @@ namespace ChatFlow
             BackColor = ChatTheme.Current?.Back ?? Color.WhiteSmoke;
             ChatTextStyler.EnsureStyles();
             foreach (var row in realized.Values)
+            {
+                row.InvalidateBindCache();   // 颜色来自样式：文本没变也要重上一次
                 row.Bind(row.Item, chatFont, RowTextWidth);
+            }
             Relayout();
             jumpToEndButton?.Invalidate();
         }
@@ -362,16 +365,20 @@ namespace ChatFlow
                         lastMessage = new ChatFlowItem(turn, ChatFlowItemKind.User);
                         items.Add(lastMessage);
                     }
-                    // 流式回合保留助手条占位：思考中/占位条，流式结束后换成正文
+                    // 流式回合：正文/思考一有内容才出助手条；两者都没有时不占位，把位置留给末尾指示行
                     if (turn.Assistant != null || turn.Streaming)
                     {
                         var message = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
                         string answer = message.Text;
                         string thinking = message.ThinkingText;
-                        if (!turn.Streaming && thinking != null && thinking.Length > MaxItemChars && turn.ThinkingExpanded == true)
+                        if (turn.Streaming && answer.Length == 0 && thinking == null)
+                            lastMessage = null;   // 还没出字也没有思考区：这一行只会是「空白文本框」，位置留给末尾的指示行
+                        else if (thinking != null && thinking.Length > MaxItemChars && turn.ThinkingExpanded == true)
                         {
                             // 展开的长思维链按行拆片：单片仍远低于整行高度上限（Win32 把控件位置钳在 ±32767），
                             // 这样展开后不需要内部滚动条。后续分片不再显示折叠头，答复挂在最后一片。
+                            // 流式期间同样要切：不切的话一条会涨成几万像素高，整行定位触发 ±32767 钳位，
+                            // 重排校正再也收敛不了（界面表现为卡死）。
                             var parts = SplitLongText(thinking);
                             for (int i = 0; i < parts.Count; i++)
                             {
@@ -388,10 +395,11 @@ namespace ChatFlow
                                 lastMessage = piece;
                             }
                         }
-                        else if (!turn.Streaming && answer.Length > MaxItemChars)
+                        else if (answer.Length > MaxItemChars)
                         {
                             // 单条太高会撞 Win32 的 32767 像素定位上限（控件 Y 被钳到 -32768），
                             // 表现为滚到底也看不到末尾内容；按行边界拆成多片，每片都远低于上限。
+                            // 流式期间也要切，理由同上（一行涨太高会让重排校正循环收敛不了）。
                             var parts = SplitLongText(answer);
                             for (int p = 0; p < parts.Count; p++)
                             {
@@ -422,9 +430,10 @@ namespace ChatFlow
                 foreach (var link in links.Where(l => l.AnchorTurnIndex < 0 || l.AnchorTurnIndex >= index))
                     items.Add(new ChatFlowItem(DataSource.Turns.LastOrDefault(), ChatFlowItemKind.Link) { Link = link });
 
-                // 执行进行中：末尾常驻「思考中…」动画行（正文已开始流式时也保留，提示仍在工作）
+                // 执行进行中且正文还没出字：末尾显示「工作中…」指示行；正文一开始流式就撤掉（文字本身即进度提示）
                 var streamingTurn = DataSource.Turns.LastOrDefault();
-                if (streamingTurn?.Streaming == true)
+                if (streamingTurn?.Streaming == true
+                    && new ChatFlowItem(streamingTurn, ChatFlowItemKind.Assistant).Text.Length == 0)
                     items.Add(new ChatFlowItem(streamingTurn, ChatFlowItemKind.Thinking));
             }
 
@@ -897,11 +906,11 @@ namespace ChatFlow
         /// 高频调用按 250ms 节流为全量重建；force=true 时跳过节流（阶段切换：占位→内容、完成）。</summary>
         public void UpdateStreamingMessage(ChatTurn turn, string fullText, bool force = false)
         {
-            var item = items.FirstOrDefault(i => i.Turn == turn && !i.IsUser);
+            var item = items.FirstOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
             if (item == null)
             {
                 RebuildItems();
-                item = items.FirstOrDefault(i => i.Turn == turn && !i.IsUser);
+                item = items.FirstOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
                 if (item == null) return;
             }
 

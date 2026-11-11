@@ -175,6 +175,22 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
+        public void Thinking_FencedCode_GetsLanguageSyntax_AndStaysExpanded()
+        {
+            // 思维链围栏内的代码按 info 语言着色（FCTB 内置高亮），并且默认展开、可手动折叠
+            using var box = NewBox();
+            string text = "先想一下。\n```cs\nvar a = 1;\n```";
+            box.Text = text;
+            ChatTextStyler.ApplyThinking(box, text);
+
+            var keyword = box.SyntaxHighlighter.KeywordStyle;
+            Assert.NotNull(keyword);
+            Assert.True(HasStyle(box[2], 0, keyword), "围栏内的 C# 关键字未按语言着色");
+            Assert.Equal(VisibleState.Visible, box.GetVisibleState(2));
+            Assert.True(ChatTextStyler.IsFoldStart(box, 1), "围栏仍应可手动折叠");
+        }
+
+        [StaFact]
         public void Thinking_ToolLinesAndOutputAndAttachmentGetStyles()
         {
             using var box = NewBox();
@@ -334,6 +350,71 @@ namespace ChatFlow.Tests
 
             Assert.Empty(links);
             Assert.True(sw.ElapsedMilliseconds < 5000, $"CollectLinks 耗时 {sw.ElapsedMilliseconds}ms");
+        }
+
+        [Fact]
+        public void CollectLinks_PathFollowedByCommand_StopsAtTheSpace()
+        {
+            // 末尾空格不属于路径：尾巴是命令行而不是路径
+            var link = Assert.Single(ChatTextStyler.CollectLinks(
+                @"运行 C:\Users\Xiaoyu\source\repos\ChatFlow\app.json status --short 结束"));
+            Assert.Equal(@"C:\Users\Xiaoyu\source\repos\ChatFlow\app.json", link.Target);
+        }
+
+        [Fact]
+        public void CollectLinks_QuotedPath_WithSpace_KeptWhole()
+        {
+            var link = Assert.Single(ChatTextStyler.CollectLinks("\"C:\\Users\\me\\My Docs\\x.txt\" 已生成"));
+            Assert.Equal(@"C:\Users\me\My Docs\x.txt", link.Target);
+        }
+
+        [Fact]
+        public void CollectLinks_ParenthesizedPath_WithSpace_KeptWhole()
+        {
+            var link = Assert.Single(ChatTextStyler.CollectLinks("见 (C:\\Users\\me\\My Docs\\x.txt) 说明"));
+            Assert.Equal(@"C:\Users\me\My Docs\x.txt", link.Target);
+        }
+
+        [Fact]
+        public void CollectLinks_Url_StopsAtIllegalChars_AndDropsTrailingPunctuation()
+        {
+            var links = ChatTextStyler.CollectLinks("见 https://venice.ai/x，另见 https://venice.ai/y.");
+            Assert.Equal(2, links.Count);
+            Assert.Equal("https://venice.ai/x", links[0].Target);
+            Assert.Equal("https://venice.ai/y", links[1].Target);
+        }
+
+        [StaFact]
+        public void Body_PathFollowedByCommand_DoesNotStyleTheCommand()
+        {
+            using var box = NewBox();
+            string text = @"运行 C:\Users\Xiaoyu\source\repos\ChatFlow status --short 结束";
+            box.Text = text;
+            ChatTextStyler.ApplyBody(box, text);
+
+            var line = box[0];
+            string lineText = box.GetLineText(0);
+            Assert.True(HasStyle(line, lineText.IndexOf("ChatFlow", StringComparison.Ordinal), ChatTextStyler.PathStyleField),
+                "路径本体未着色");
+            Assert.False(HasStyle(line, lineText.IndexOf("status", StringComparison.Ordinal), ChatTextStyler.PathStyleField),
+                "尾部命令被误判为路径");
+            Assert.False(HasStyle(line, lineText.IndexOf("--short", StringComparison.Ordinal), ChatTextStyler.PathStyleField),
+                "尾部参数被误判为路径");
+        }
+
+        [StaFact]
+        public void Body_FencedPathWithSpace_IsStyledWithoutTheFence()
+        {
+            using var box = NewBox();
+            string text = "见 \"C:\\Users\\me\\My Docs\" 里";
+            box.Text = text;
+            ChatTextStyler.ApplyBody(box, text);
+
+            var line = box[0];
+            string lineText = box.GetLineText(0);
+            Assert.True(HasStyle(line, lineText.IndexOf("My Docs", StringComparison.Ordinal), ChatTextStyler.PathStyleField),
+                "围栏内带空格的路径未着色");
+            Assert.False(HasStyle(line, lineText.IndexOf('"'), ChatTextStyler.PathStyleField), "引号不应算作路径");
         }
 
         [Fact]
