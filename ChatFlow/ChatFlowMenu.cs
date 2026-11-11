@@ -8,9 +8,10 @@ namespace ChatFlow
         public static void Show(ChatFlowControl owner, ChatFlowItem item, Point screen)
         {
             if (owner == null || item == null) return;
-            bool undo = owner.CanUndo;
-            bool copy = owner.CanCopy;
-            if (!undo && !copy) return;
+
+            string selected = owner.RowOf(item)?.GetSelectedText();
+            bool hasSelection = !string.IsNullOrEmpty(selected);
+            var actions = owner.SelectionActions ?? [];
 
             var palette = ChatTheme.Current;
             Color back = palette?.Control ?? Color.White;
@@ -19,6 +20,8 @@ namespace ChatFlow
             Color border = palette?.Border ?? Color.FromArgb(0xE8, 0xE8, 0xE8);
             int pad = Dip(owner, 6);
             int radius = Dip(owner, 8);
+            var renderer = new MenuRenderer(back, fore, hover, border, Dip(owner, 6));
+            void Round(ToolStripDropDown strip) => strip.Opened += (_, _) => strip.Region = new Region(RoundedRect(strip.ClientRectangle, radius));
 
             var menu = new ContextMenuStrip
             {
@@ -28,11 +31,27 @@ namespace ChatFlow
                 ForeColor = fore,
                 Font = new Font("Segoe UI", 9F),
                 Padding = new Padding(pad),
-                Renderer = new MenuRenderer(back, fore, hover, border, Dip(owner, 6))
+                Renderer = renderer
             };
-            menu.Opened += (_, _) => menu.Region = new Region(RoundedRect(menu.ClientRectangle, radius));
-            if (undo) menu.Items.Add(Item("撤回", () => owner.RequestUndo(item)));
-            if (copy) menu.Items.Add(Item("复制", () => owner.RequestCopy(item)));
+            Round(menu);
+            if (owner.CanUndo) menu.Items.Add(Item("撤回", () => owner.RequestUndo(item)));
+            if (owner.CanCopy) menu.Items.Add(Item("复制本条对话", () => owner.RequestCopy(item)));
+            menu.Items.Add(Item("复制选择文本", () => CopyText(selected), hasSelection));
+            // 「选择」不只是开勾选框：已打开时给出关闭入口，免得勾着却找不到退出口
+            menu.Items.Add(Item(owner.ShowSelection ? "取消选择" : "选择", owner.ToggleSelectionMode));
+            // 「操作」只在有勾选项时出现：勾选动作没有目标时列出来只会让人误点
+            if (actions.Count > 0 && owner.HasCheckedTurns)
+            {
+                var root = new ToolStripMenuItem("操作") { AutoSize = true, Padding = new Padding(12, 7, 22, 7) };
+                root.DropDown.Renderer = renderer;
+                root.DropDown.BackColor = back;
+                root.DropDown.Font = menu.Font;
+                Round(root.DropDown);
+                foreach (var action in actions)
+                    root.DropDownItems.Add(Item(action.Text, () => owner.RaiseSelectionAction(action.Key)));
+                menu.Items.Add(root);
+            }
+
             menu.Closed += (_, _) =>
             {
                 //Closed 在菜单关闭流程中间同步触发：这里立即 Dispose 会让 WinForms 的
@@ -43,11 +62,19 @@ namespace ChatFlow
             menu.Show(screen);
         }
 
-        private static ToolStripMenuItem Item(string text, Action click)
+        private static void CopyText(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            try { Clipboard.SetText(text); }
+            catch { /* 剪贴板被占用：保持菜单关闭，不打断阅读 */ }
+        }
+
+        private static ToolStripMenuItem Item(string text, Action click, bool enabled = true)
         {
             var item = new ToolStripMenuItem(text)
             {
                 AutoSize = true,
+                Enabled = enabled,
                 Padding = new Padding(12, 7, 22, 7)
             };
             item.Click += (_, _) => click();

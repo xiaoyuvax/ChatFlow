@@ -50,6 +50,13 @@ namespace ChatFlow
         [JsonIgnore]
         public string ToolCallLines { get; set; } = string.Empty;
 
+        /// <summary>
+        /// 思维片段与工具调用按发生顺序穿插后的文本（工具块形如 tool(args) · 1s）。
+        /// 非空时聊天正文按这个顺序展示，思考区不再重复；旧数据为空则退回两段式。
+        /// </summary>
+        [JsonIgnore]
+        public string TimelineText { get; set; } = string.Empty;
+
         /// <summary>思考区汇总：已执行的工具调用步数。</summary>
         [JsonIgnore]
         public int ToolStepCount { get; set; }

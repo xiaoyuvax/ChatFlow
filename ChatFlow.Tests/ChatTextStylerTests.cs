@@ -158,6 +158,23 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
+        public void Thinking_MarkdownBlocksAreFoldableButExpanded()
+        {
+            // 思维链里的 markdown 块（围栏代码、引用块）要能被折叠，但默认展开
+            using var box = NewBox();
+            string text = "先看仓库。\n\n```cs\nvar a = 1;\nvar b = 2;\n```\n\n> 引用一\n> 引用二\n> 引用三";
+            box.Text = text;
+            ChatTextStyler.ApplyThinking(box, text);
+
+            Assert.True(ChatTextStyler.IsFoldStart(box, 2), "围栏代码块应可折叠");
+            Assert.True(ChatTextStyler.IsFoldEnd(box, 5), "围栏代码块应有折叠终点");
+            Assert.True(ChatTextStyler.IsFoldStart(box, 7), "引用块应可折叠");
+            Assert.True(ChatTextStyler.IsFoldEnd(box, 9), "引用块应有折叠终点");
+            Assert.Equal(VisibleState.Visible, box.GetVisibleState(3));
+            Assert.Equal(VisibleState.Visible, box.GetVisibleState(8));
+        }
+
+        [StaFact]
         public void Thinking_ToolLinesAndOutputAndAttachmentGetStyles()
         {
             using var box = NewBox();
@@ -221,6 +238,18 @@ namespace ChatFlow.Tests
             Assert.True(ChatTextStyler.IsFoldStart(box, 0), "带步号的工具块应可作为折叠首行");
         }
 
+        [StaFact]
+        public void Thinking_TimelineToolLine_GetsToolStyle()
+        {
+            // 时间线工具行（RunTimeline.Render）没有前缀：tool(args) · 1ms，工具名仍要醒目
+            using var box = NewBox();
+            string text = "先看仓库。\n\nReadFile(offset=1, path=src/A.cs) · 1ms";
+            box.Text = text;
+            ChatTextStyler.ApplyThinking(box, text);
+
+            Assert.True(HasStyle(box[2], 0, ChatTextStyler.ToolCallStyleField), "时间线工具行的工具名未着色");
+        }
+
         private static bool HasStyle(Line line, int charIndex, Style style)
         {
             if (charIndex < 0 || line == null || charIndex >= line.Count) return false;
@@ -249,9 +278,11 @@ namespace ChatFlow.Tests
         }
 
         [Fact]
-        public void CollectLinks_NonImagePath_IsNotClickable()
+        public void CollectLinks_NonImagePath_IsFileLink()
         {
-            Assert.Empty(ChatTextStyler.CollectLinks("配置文件 J:/story/x.json 已更新"));
+            var link = Assert.Single(ChatTextStyler.CollectLinks("配置文件 J:/story/x.json 已更新"));
+            Assert.Equal(ChatTextStyler.ChatLinkKind.File, link.Kind);
+            Assert.Equal("J:/story/x.json", link.Target);
         }
 
         [Fact]
@@ -265,6 +296,25 @@ namespace ChatFlow.Tests
         }
 
         [Fact]
+        public void CollectLinks_BuildError_ParenNotPartOfPath()
+        {
+            // 截图里的形态：路径后紧跟 (行,列): 报错位置——左括号不能算进路径（')' 本就已终止）
+            var link = Assert.Single(ChatTextStyler.CollectLinks(
+                @"FAIL build C:\Users\me\repos\OpenLoop\src\OpenLoop.A\OpenLoop.A.csproj(11,14): error MSB4025"));
+            Assert.Equal(ChatTextStyler.ChatLinkKind.File, link.Kind);
+            Assert.Equal(@"C:\Users\me\repos\OpenLoop\src\OpenLoop.A\OpenLoop.A.csproj", link.Target);
+        }
+
+        [Fact]
+        public void CollectLinks_ParenFolderFollowedBySeparator_KeptWhole()
+        {
+            // ")" 后紧跟分隔符 = 括号是真实目录的一部分（Program Files (x86)\…），不得在 "(" 处断开
+            var link = Assert.Single(ChatTextStyler.CollectLinks(@"已安装到 C:\Program Files (x86)\app\x.exe 里"));
+            Assert.Equal(ChatTextStyler.ChatLinkKind.File, link.Kind);
+            Assert.Equal(@"C:\Program Files (x86)\app\x.exe", link.Target);
+        }
+
+        [Fact]
         public void CollectLinks_Url_WinsOverImageExtension()
         {
             // URL 一律按 Url 处理（含图片 URL），不得被路径规则切碎
@@ -272,6 +322,18 @@ namespace ChatFlow.Tests
             var link = Assert.Single(links);
             Assert.Equal(ChatTextStyler.ChatLinkKind.Url, link.Kind);
             Assert.Equal("https://venice.ai/x/cover.png", link.Target);
+        }
+
+        [Fact]
+        public void CollectLinks_ExtensionlessToolPath_DoesNotBacktrackExponentially()
+        {
+            // 回归：ListDir(path=C:/Users/.../OpenLoop) 这类无扩展名长路径曾让 CollectLinks 回溯爆炸（UI 卡死数分钟）
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var links = ChatTextStyler.CollectLinks("[工具] ListDir(path=C:/Users/Xiaoyu/source/repos/OpenLoop) · 5ms");
+            sw.Stop();
+
+            Assert.Empty(links);
+            Assert.True(sw.ElapsedMilliseconds < 5000, $"CollectLinks 耗时 {sw.ElapsedMilliseconds}ms");
         }
 
         [Fact]

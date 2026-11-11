@@ -142,6 +142,45 @@ namespace ChatFlow.Tests
             }
         }
 
+        /// <summary>
+        /// Markdown 渲染分支（MarkdownTextBox 关掉了 DetectUrls）：URL / 图片路径仍要可点，
+        /// 命中测试按纯文本偏移（GetCharIndexFromPosition）与 LinkSpans 对齐。
+        /// </summary>
+        [StaFact]
+        public void MarkdownBox_ClickOnImagePath_RaisesLinkClicked()
+        {
+            using var md = new MarkdownRowTextBox();
+            var host = new Form { Size = new Size(900, 400) };
+            host.Controls.Add(md);
+            host.Show();
+            try
+            {
+                md.SetMarkdown("看图 " + BodyText);
+
+                (string kind, string target) fired = default;
+                md.LinkClicked += (kind, target) => fired = (kind.ToString(), target);
+
+                int at = md.Text.IndexOf("J:/MY GOD/铁蛋.png", StringComparison.Ordinal) + 3;
+                Assert.True(at > 2, $"Markdown 渲染后的纯文本里找不到图片路径：{md.Text}");
+                ClickAt(md, md.GetPositionFromCharIndex(at));
+
+                Assert.Equal("ImageFile", fired.kind);
+                Assert.Equal("J:/MY GOD/铁蛋.png", fired.target);
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
+        private static void ClickAt(MarkdownRowTextBox box, Point at)
+        {
+            var onClick = typeof(MarkdownRowTextBox).GetMethod(
+                "OnMouseDown", BindingFlags.NonPublic | BindingFlags.Instance)!;
+            onClick.Invoke(box, [new WF.MouseEventArgs(WF.MouseButtons.Left, 1, at.X, at.Y, 0)]);
+        }
+
         private static ChatTurn MakeTurn() => new()
         {
             User = new ChatMessage("user", "图在哪"),

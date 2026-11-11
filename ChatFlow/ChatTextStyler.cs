@@ -87,21 +87,35 @@ namespace ChatFlow
         private static readonly Regex UrlRegex = new(@"\bhttps?://[^\s）)】」]+", RegexOptions.Compiled);
         // 本地路径：盘符（J:/、J:\）或 UNC（\\server\share）；允许路径内空格（如 "My God"），
         // 但不吞尾部空白与 CJK/全角字符（中文紧随路径时在此断开）。
+        // 括号只有当「)」后面紧跟分隔符时才算路径的一部分（C:\Program Files (x86)\X）；
+        // 报错引用「x.csproj(11,14)」的 ) 后面不是分隔符，路径仍在 ( 处截断。
         // 前置 (?<![A-Za-z0-9]) 避免把 "https://" 里的 "s:/" 误判成盘符路径。
+        private const string PathChunk = @"[^\s<>|:*?""`(),;\r\n\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]+";
+        private const string PathParen = @"\([^()\r\n]*\)(?=[\\/])";
+        private const string PathTail = @"(?:" + PathChunk + "|" + PathParen + ")(?: ?(?:" + PathChunk + "|" + PathParen + "))*";
         private static readonly Regex PathRegex = new(
-            @"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s<>|:*?""`),;\r\n\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]+" +
-            @"(?: [^\s<>|:*?""`),;\r\n\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]+)*",
+            @"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)" + PathTail,
             RegexOptions.Compiled);
         private static readonly Regex HeadingRegex = new(@"^(?<text>#{1,6}\s+.+)$", RegexOptions.Compiled | RegexOptions.Multiline);
         // 可点击的本地路径：与 <see cref="PathRegex"/> 同起点，但允许 CJK 文件名，且必须以「.扩展名 + 非字母数字边界」收尾，
         // 否则 "J:/x.png已保存" 会被整句吞掉而认不出图片；是否图片仍由 AttachmentHelper.IsImage 判定（扩展名列表单一来源）。
+        private const string LinkChunk = @"[^\s<>|:*?""`(),;\r\n]+";
+        // 续段起点只能由空格或「括号目录」唯一确定（旧的 `(?: ?(?:Chunk|Paren))*` 允许把一个无扩展名的
+        // 长路径词任意切分成多段，尾部 `\.扩展名` 匹配失败后回溯组合爆炸：36 字符要试 2^35 种切法，
+        // 一条 `ListDir(path=C:/Users/.../OpenLoop)` 就能让 UI 线程卡死数分钟）。
+        private const string LinkTail = LinkChunk +
+            @"(?:" + PathParen + LinkChunk + @"| (?:" + PathParen + @")?" + LinkChunk + @")*";
         private static readonly Regex LinkPathRegex = new(
-            @"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)[^\s<>|:*?""`),;\r\n]+(?: [^\s<>|:*?""`),;\r\n]+)*\.[A-Za-z0-9]{1,5}(?![A-Za-z0-9])",
+            @"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)" + LinkTail +
+            @"\.[A-Za-z0-9]{1,8}(?![A-Za-z0-9])",
             RegexOptions.Compiled);
         // 形如「» #3 tool(args) → 成功 · 420ms」：序号可选（历史文本用这种带 » 的旧格式）
         private static readonly Regex ToolCallRegex = new(@"^»\s*(#\d+\s+)?\S+\s*\(.*$", RegexOptions.Compiled | RegexOptions.Multiline);
         // 新格式「tool(args) · 348ms」：整行不再是工具轨迹标记，只把工具名加粗
         private static readonly Regex ToolNameRegex = new(@"^[A-Za-z_][\w\-\.]*(?=\()", RegexOptions.Compiled | RegexOptions.Multiline);
+        // 旧版时间线格式「[工具] tool(args) · 348ms」（前缀已停用，只为历史会话保留着色）
+        private static readonly Regex TimelineToolRegex = new(
+            @"^\[工具\]\s+[A-Za-z_][\w\-\.]*(?=\()", RegexOptions.Compiled | RegexOptions.Multiline);
         private static readonly Regex ToolOkRegex = new(@"→\s*成功", RegexOptions.Compiled);
         private static readonly Regex ToolFailRegex = new(@"(?:→\s*失败|·\s*失败)", RegexOptions.Compiled);
         private static readonly Regex ToolOutputRegex = new(@"^\s+(输出|data|error)\s*:.*$", RegexOptions.Compiled | RegexOptions.Multiline);
@@ -127,17 +141,18 @@ namespace ChatFlow
 
         // ============ 可点击链接（URL / 图像文件路径） ============
 
-        /// <summary>可点击链接种类：URL 交由宿主外部处理，图像文件路径交由宿主本地预览。</summary>
+        /// <summary>可点击链接种类：URL 交由宿主外部处理，图像/文本文件路径交由宿主本地预览。</summary>
         public enum ChatLinkKind
         {
             Url,
             ImageFile,
+            File,
         }
 
         /// <summary>文本中的一个可点击链接（绝对字符区间 + 目标文本）。</summary>
         public readonly record struct ChatLink(int Start, int Length, ChatLinkKind Kind, string Target);
 
-        /// <summary>收集文本中可点击的链接：URL + 图像文件路径（PathStyle 已高亮的那批里按扩展名过滤）。</summary>
+        /// <summary>收集文本中可点击的链接：URL + 本地文件路径（图像单独一类，其余交给宿主的文件预览）。</summary>
         public static List<ChatLink> CollectLinks(string text)
         {
             var links = new List<ChatLink>();
@@ -145,8 +160,8 @@ namespace ChatFlow
             foreach (Match m in UrlRegex.Matches(text))
                 links.Add(new ChatLink(m.Index, m.Length, ChatLinkKind.Url, m.Value));
             foreach (Match m in LinkPathRegex.Matches(text))
-                if (ChatMedia.IsImage(m.Value))
-                    links.Add(new ChatLink(m.Index, m.Length, ChatLinkKind.ImageFile, m.Value));
+                links.Add(new ChatLink(m.Index, m.Length,
+                    ChatMedia.IsImage(m.Value) ? ChatLinkKind.ImageFile : ChatLinkKind.File, m.Value));
             links.Sort((a, b) => a.Start.CompareTo(b.Start));
             return links;
         }
@@ -213,6 +228,7 @@ namespace ChatFlow
 
                 range.SetStyle(ToolCallStyle, ToolCallRegex);
                 range.SetStyle(ToolCallStyle, ToolNameRegex);
+                range.SetStyle(ToolCallStyle, TimelineToolRegex);
                 range.SetStyle(ToolOkStyle, ToolOkRegex);
                 range.SetStyle(ToolFailStyle, ToolFailRegex);
                 range.SetStyle(ToolOutputStyle, ToolOutputRegex);
@@ -221,6 +237,9 @@ namespace ChatFlow
                 // 最后上路径：让灰底输出行里的本地路径也醒目
                 range.SetStyle(PathStyle, PathRegex);
                 ApplyBlockFolding(box, text);
+                // 思维链里也会出现 markdown 结构：围栏代码块、引用块留折叠标记，但一律默认展开
+                ApplyCodeBlockFolding(box, text, collapseByDefault: false);
+                ApplyBlockquoteFolding(box, text);
                 ApplyBraceBlockFolding(box, text); // 工具输出里的裸 JSON 默认折叠（省空间）
             }
             catch
@@ -250,21 +269,32 @@ namespace ChatFlow
         internal const int MinCodeBlockContentLinesToCollapse = 3;
 
         /// <summary>代码块围栏成对折叠：``` 行交替配对（开始/结束）。
-        /// 内容行数 ≥ 阈值的块默认收起（省空间），点击左侧 ○ 标记展开。
+        /// 内容行数 ≥ 阈值的块默认收起（省空间），点击左侧 ○ 标记展开；<paramref name="collapseByDefault"/> 为 false 时只留标记。
         /// <b>例外：含提示词语言括号（[zh:…:zh] / [en:…:en]）的块默认展开</b>——那是要一眼看全的提示词正文。</summary>
-        private static void ApplyCodeBlockFolding(RowTextBox box, string text)
+        private static void ApplyCodeBlockFolding(RowTextBox box, string text, bool collapseByDefault = true)
         {
             var matches = FenceRegex.Matches(text);
             for (int i = 0; i + 1 < matches.Count; i += 2)
             {
                 int startLine = LineIndexOf(text, matches[i].Index);
                 int endLine = LineIndexOf(text, matches[i + 1].Index);
+                // 起点已被别的块占用（嵌套）：不再叠一层标记，避免折叠区间互相吞
+                if (startLine < box.LinesCount && !string.IsNullOrEmpty(box[startLine].FoldingStartMarker)) continue;
                 MarkFold(box, startLine, endLine);
+                if (!collapseByDefault) continue;
                 string span = text[matches[i].Index..(matches[i + 1].Index + matches[i + 1].Length)];
                 if (HasLanguageBracket(span)) continue;   // 提示词括号段：留折叠标记但不自动收起
                 if (endLine - startLine - 1 >= MinCodeBlockContentLinesToCollapse)
                     TryCollapse(box, startLine);
             }
+        }
+
+        /// <summary>连续 &gt; 引用块：留可手动折叠的标记，默认展开。</summary>
+        private static void ApplyBlockquoteFolding(RowTextBox box, string text)
+        {
+            foreach (var (start, end) in FindBlockquoteSpans(text))
+                if (start < box.LinesCount && string.IsNullOrEmpty(box[start].FoldingStartMarker))
+                    MarkFold(box, start, end);
         }
 
         /// <summary>文本是否含提示词语言括号（[zh: … :zh] / [en: … :en]）——这类块默认展开不折叠。</summary>

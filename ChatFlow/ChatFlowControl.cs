@@ -51,6 +51,33 @@ namespace ChatFlow
         internal bool CanUndo => UndoRequested != null;
         internal bool CanCopy => CopyRequested != null;
 
+        /// <summary>右键「操作」子菜单的候选动作（作用于已勾选的对话）；为空则不显示该子菜单。</summary>
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public IReadOnlyList<ChatSelectionAction> SelectionActions { get; set; } = [];
+
+        /// <summary>右键菜单切换「选择」模式后触发（宿主据此同步工具栏开关）。</summary>
+        public event EventHandler SelectionModeChanged;
+
+        /// <summary>右键「操作」里点了某一项后触发（按 Key 派发，语义由宿主决定）。</summary>
+        public event EventHandler<ChatSelectionActionEventArgs> SelectionActionRequested;
+
+        internal bool HasCheckedTurns => DataSource?.Turns.Any(t => t.Selected) == true;
+
+        internal ChatMessageRow RowOf(ChatFlowItem item)
+            => item != null && realized.TryGetValue(item, out var row) ? row : null;
+
+        internal void ToggleSelectionMode()
+        {
+            ShowSelection = !ShowSelection;
+            if (!ShowSelection) SelectTurns(_ => false);
+            SelectionModeChanged?.Invoke(this, EventArgs.Empty);
+        }
+
+        internal void RaiseSelectionAction(string key)
+        {
+            if (!string.IsNullOrEmpty(key)) SelectionActionRequested?.Invoke(this, new ChatSelectionActionEventArgs(key));
+        }
+
         internal void RequestUndo(ChatFlowItem item)
         {
             if (item != null) UndoRequested?.Invoke(this, new ChatFlowActionEventArgs(item.Turn));
@@ -297,6 +324,29 @@ namespace ChatFlow
 
         private void OnTurnChanged(object sender, EventArgs e) => RebuildItems();
 
+        /// <summary>单条消息渲染上限（字符）：超过即按行边界拆片。
+        /// 依据：Win32 子窗口定位在约 ±32767 像素处被钳制，一条几十万像素高的行会永久挡住末尾内容。</summary>
+        private const int MaxItemChars = 10_000;
+
+        private static List<string> SplitLongText(string text)
+        {
+            var parts = new List<string>();
+            int start = 0;
+            while (start < text.Length)
+            {
+                int len = Math.Min(MaxItemChars, text.Length - start);
+                if (start + len < text.Length)
+                {
+                    int nl = text.LastIndexOf('\n', start + len - 1, len);
+                    if (nl > start + len / 2) len = nl + 1 - start;
+                }
+                parts.Add(text.Substring(start, len));
+                start += len;
+            }
+            if (parts.Count == 0) parts.Add("");
+            return parts;
+        }
+
         private void RebuildItems()
         {
             items.Clear();
@@ -315,8 +365,49 @@ namespace ChatFlow
                     // 流式回合保留助手条占位：思考中/占位条，流式结束后换成正文
                     if (turn.Assistant != null || turn.Streaming)
                     {
-                        lastMessage = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
-                        items.Add(lastMessage);
+                        var message = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
+                        string answer = message.Text;
+                        string thinking = message.ThinkingText;
+                        if (!turn.Streaming && thinking != null && thinking.Length > MaxItemChars && turn.ThinkingExpanded == true)
+                        {
+                            // 展开的长思维链按行拆片：单片仍远低于整行高度上限（Win32 把控件位置钳在 ±32767），
+                            // 这样展开后不需要内部滚动条。后续分片不再显示折叠头，答复挂在最后一片。
+                            var parts = SplitLongText(thinking);
+                            for (int i = 0; i < parts.Count; i++)
+                            {
+                                ChatFlowItem piece = i == 0
+                                    ? message
+                                    : new ChatFlowItem(turn, ChatFlowItemKind.Assistant)
+                                    {
+                                        IsContinuation = true,
+                                        IsThinkingContinuation = true
+                                    };
+                                piece.ThinkingOverride = parts[i];
+                                piece.TextOverride = i == parts.Count - 1 ? answer : "";
+                                items.Add(piece);
+                                lastMessage = piece;
+                            }
+                        }
+                        else if (!turn.Streaming && answer.Length > MaxItemChars)
+                        {
+                            // 单条太高会撞 Win32 的 32767 像素定位上限（控件 Y 被钳到 -32768），
+                            // 表现为滚到底也看不到末尾内容；按行边界拆成多片，每片都远低于上限。
+                            var parts = SplitLongText(answer);
+                            for (int p = 0; p < parts.Count; p++)
+                            {
+                                ChatFlowItem piece = p == 0
+                                    ? message
+                                    : new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { IsContinuation = true };
+                                piece.TextOverride = parts[p];
+                                items.Add(piece);
+                                lastMessage = piece;
+                            }
+                        }
+                        else
+                        {
+                            items.Add(message);
+                            lastMessage = message;
+                        }
                     }
                     if (lastMessage != null) lastMessage.IsPairEnd = true;
 
@@ -889,12 +980,13 @@ namespace ChatFlow
         public string GetLayoutDiagnostics()
         {
             var sb = new System.Text.StringBuilder();
-            sb.Append($"items={items.Count} realized={realized.Count} pool={rowPool.Count} totalH={totalHeight} vbar={(vbar.Visible ? vbar.Value.ToString() : "-")}");
+            sb.Append($"items={items.Count} realized={realized.Count} pool={rowPool.Count} totalH={totalHeight} view={ClientSize.Height} vbar={(vbar.Visible ? vbar.Value.ToString() : "-")}");
             foreach (var (item, row) in realized)
             {
                 if (!row.Visible) continue;
+                itemIndex.TryGetValue(item, out int idx);
                 int clipped = row.GetClipping();
-                sb.Append($" | [{(item.IsUser ? "U" : "A")}]clip={(clipped == 0 ? "OK" : clipped.ToString())} md={(row.IsMarkdownRendered ? "1" : "0")}");
+                sb.Append($" | [{idx}]{(item.IsUser ? "U" : "A")} y={row.Top} h={row.Height} clip={(clipped == 0 ? "OK" : clipped.ToString())} md={(row.IsMarkdownRendered ? "1" : "0")} think={(row.ThinkingScrolls ? "scroll" : "ok")}");
             }
             return sb.ToString();
         }
@@ -1083,6 +1175,16 @@ namespace ChatFlow
         public ChatTurn Turn { get; }
     }
 
+    /// <summary>右键「操作」子菜单的一项：Key 由宿主定义并派发，Text 直接显示。</summary>
+    public sealed record ChatSelectionAction(string Key, string Text);
+
+    public sealed class ChatSelectionActionEventArgs : EventArgs
+    {
+        public ChatSelectionActionEventArgs(string key) => Key = key;
+
+        public string Key { get; }
+    }
+
     public sealed class ChatSurveyToggledEventArgs : EventArgs
     {
         public ChatSurveyToggledEventArgs(ChatSurvey survey, bool expanded)
@@ -1108,7 +1210,7 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
 
         public ChatTextStyler.ChatLinkKind Kind { get; }
 
-        /// <summary>URL 文本或图像文件路径（与聊天区内显示的文本一致）。</summary>
+        /// <summary>URL 文本或本地文件路径（与聊天区内显示的文本一致）。</summary>
         public string Target { get; }
     }
 
@@ -1123,6 +1225,14 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         public ChatTurn Turn { get; }
         public ChatFlowItemKind Kind { get; }
         internal bool IsPairEnd { get; set; }
+        /// <summary>超长正文被拆片后的分片文本；null = 按 Turn 生成。</summary>
+        internal string TextOverride { get; set; }
+        /// <summary>超长思维链被拆片后的分片文本；null = 按 Turn 生成。</summary>
+        internal string ThinkingOverride { get; set; }
+        /// <summary>思维链的后续分片：不再重复折叠头，展开时直接铺开。</summary>
+        internal bool IsThinkingContinuation { get; set; }
+        /// <summary>超长正文的后续分片：不重复显示思考区折叠头。</summary>
+        internal bool IsContinuation { get; set; }
         public ChatSurvey Survey { get; init; }
         public ChatLink Link { get; init; }
         public bool IsUser => Kind == ChatFlowItemKind.User;
@@ -1136,29 +1246,27 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
             get
             {
                 if (Kind == ChatFlowItemKind.Thinking) return string.Empty;
+                if (TextOverride != null) return TextOverride;
                 if (IsUser) return Turn.UserText;
                 if (Turn.Streaming)
-                {
-                    // 普通聊天流式：正文照常逐 token 显示；Agent 正文结束前为空 → 显示工具实时状态（无则空=占位「思考中……」）
-                    if (!string.IsNullOrEmpty(Turn.AssistantText)) return Turn.AssistantText;
-                    return Turn.ToolStatusText ?? string.Empty;
-                }
-                string tools = Turn.ToolCallLines;
-                if (string.IsNullOrEmpty(tools)) return Turn.AssistantText;
-                return string.IsNullOrEmpty(Turn.AssistantText)
-                    ? tools
-                    : tools + "\n\n" + Turn.AssistantText;
+                    return string.IsNullOrEmpty(Turn.AssistantText) ? Turn.ToolStatusText ?? string.Empty : Turn.AssistantText;
+                // 正文只放答复；思维链与工具轨迹进思考区（FCTB，默认折叠）
+                return Turn.AssistantText;
             }
         }
 
-        /// <summary>思考区内容（仅助手条目有；用户条目返回 null）。</summary>
+        /// <summary>思考区内容（仅助手条目有；用户条目返回 null）。有时间线时整段原样进 FCTB，不做 markdown 渲染。</summary>
         public string ThinkingText
         {
             get
             {
                 if (IsUser || Kind == ChatFlowItemKind.Thinking) return null;
+                if (ThinkingOverride != null) return ThinkingOverride;
+                if (IsContinuation) return null;
+                if (!string.IsNullOrEmpty(Turn.TimelineText)) return Turn.TimelineText;
                 var parts = new List<string>();
                 if (!string.IsNullOrEmpty(Turn.ToolTraceText)) parts.Add(Turn.ToolTraceText);
+                else if (!string.IsNullOrEmpty(Turn.ToolCallLines)) parts.Add(Turn.ToolCallLines);
                 if (!string.IsNullOrEmpty(Turn.ReasoningText)) parts.Add(Turn.ReasoningText);
                 return parts.Count == 0 ? null : string.Join("\n", parts);
             }

@@ -45,7 +45,7 @@ namespace ChatFlow.Tests
         }
 
         [Fact]
-        public void Text_PrependsToolCallLines()
+        public void Text_IsOnlyAnswer_ToolLinesGoToThinking()
         {
             var turn = new ChatTurn
             {
@@ -54,13 +54,12 @@ namespace ChatFlow.Tests
                 ToolCallLines = "» image_edit(path=J:/x.png)"
             };
             var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
-            Assert.Contains("» image_edit", item.Text);
-            Assert.Contains("最终回答", item.Text);
-            Assert.StartsWith("»", item.Text);
+            Assert.Equal("最终回答", item.Text);
+            Assert.Contains("» image_edit", item.ThinkingText);
         }
 
         [Fact]
-        public void Text_StreamingHidesToolCallLines()
+        public void Text_StreamingKeepsToolCallLinesOutOfBody()
         {
             var turn = new ChatTurn
             {
@@ -73,8 +72,8 @@ namespace ChatFlow.Tests
             Assert.True(string.IsNullOrEmpty(item.Text), $"流式期间正文不应含工具行，实为：{item.Text}");
 
             turn.Streaming = false;
-            Assert.StartsWith("» app_status()", item.Text);
-            Assert.Contains("» puppet_get", item.Text);
+            Assert.True(string.IsNullOrEmpty(item.Text));
+            Assert.StartsWith("» app_status()", item.ThinkingText);
         }
 
         [Fact]
@@ -104,6 +103,39 @@ namespace ChatFlow.Tests
             var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
             Assert.Equal("» 正在调用 生图接口（image_generate）…", item.Text);
             Assert.DoesNotContain("image_generate(", item.Text);
+        }
+
+        [Fact]
+        public void Text_TimelineGoesToThinking_BodyIsAnswer()
+        {
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "u"),
+                Assistant = new ChatMessage("assistant", "最终回答"),
+                TimelineText = "先看仓库。\n\nGrep(a) · 1s",
+                ReasoningText = "先看仓库。",
+                ToolCallLines = "Grep(a) · 1s"
+            };
+            var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
+
+            Assert.Equal("最终回答", item.Text);
+            Assert.Equal("先看仓库。\n\nGrep(a) · 1s", item.ThinkingText);
+        }
+
+        [Fact]
+        public void Text_TimelineStreamingShowsStatus_ThinkingKeepsTimeline()
+        {
+            var turn = new ChatTurn
+            {
+                Assistant = new ChatMessage("assistant", ""),
+                TimelineText = "先看仓库。",
+                ToolStatusText = "正在调用 Grep…",
+                Streaming = true
+            };
+            var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
+
+            Assert.Equal("正在调用 Grep…", item.Text);
+            Assert.Equal("先看仓库。", item.ThinkingText);
         }
     }
 }

@@ -83,6 +83,8 @@ namespace ChatFlow.Tests
                     User = new ChatMessage("user", "问"),
                     Assistant = new ChatMessage("assistant", "## 标题\n\n- 一\n- 二"),
                 };
+                row.Width = 600;   // 与 Bind 传入的可用宽度一致（真实调用里由控件 SetBounds 保证）
+                row.Height = 400;
                 row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.Assistant), font, 600);
 
                 Assert.True(row.IsMarkdownRendered);

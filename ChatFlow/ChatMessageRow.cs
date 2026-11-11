@@ -39,7 +39,10 @@ namespace ChatFlow
         private readonly ChatFlowControl owner;
 
         private bool _binding;
+        private int _contentWidth;               // 正文可用宽度（Bind 传入的宽度，避免复用行时用到旧 Width）
         private bool thinkingVisible;            // 当前条目是否有思考区
+        private bool thinkingHeaderShown;        // 是否显示折叠头（后续分片不显示）
+        private bool thinkingBoxShown;           // 是否显示思考区文本（不用 Control.Visible：行在池里时父级不可见会误判）
         private bool canUndo;
         private bool canCopy;
         private bool actionsShown;
@@ -57,6 +60,11 @@ namespace ChatFlow
         public ChatFlowItem Item { get; internal set; }
 
         private int Dip(int value) => (int)Math.Round(value * DeviceDpi / 96f);
+
+        /// <summary>正文可用宽度（已扣右侧留白）。Bind 时用传入宽度，之后跟随行宽。</summary>
+        private int ContentWidth => _contentWidth > 0
+            ? _contentWidth
+            : Math.Max(Dip(20), Width - Dip(TextRightSpace));
 
         private static ChatPalette P => ChatTheme.Current;   // null = 浅色（沿用原配色）
 
@@ -150,6 +158,7 @@ namespace ChatFlow
                 BackColor = owner.BackColor,
             };
             md.MouseWheelForwarded += (delta, ctrl) => owner.ForwardWheel(delta, ctrl);
+            md.LinkClicked += (kind, target) => LinkClicked?.Invoke(Item, kind, target);
             md.MouseUp += (_, e) =>
             {
                 if (e.Button == MouseButtons.Right)
@@ -212,6 +221,7 @@ namespace ChatFlow
         public int Bind(ChatFlowItem item, Font font, int reservedWidth)
         {
             _binding = true;
+            _contentWidth = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
             // 行表面与勾选框底色：主题切换只重绑（OnAppThemeChanged → Bind），不会重建控件，
             // 池化行上一次主题残留的底色（ChatTheme 对快照后新建的行无从还原）必须在这里重贴
             BackColor = Color.Transparent;
@@ -228,11 +238,12 @@ namespace ChatFlow
             chk.ContextMenuStrip = owner.ContextMenuStrip;
             lblRole.ContextMenuStrip = owner.ContextMenuStrip;
             txt.ContextMenuStrip = owner.ContextMenuStrip;
-            lblRole.Text = item.IsUser ? "用户" : "AI";
+            lblRole.Text = item.IsUser ? "用户" : (item.IsContinuation ? "AI（续）" : "AI");
             lblRole.ForeColor = P != null ? P.Accent : (item.IsUser ? Color.SteelBlue : Color.SeaGreen);
             bool useMarkdown =
 #if NET8_0_OR_GREATER
-                !item.Turn.Streaming && ChatMarkdown.IsMarkdown(item.Text);
+                !item.Turn.Streaming && ChatMarkdown.IsMarkdown(item.Text)
+                && ChatMarkdown.SplitSegments(item.Text).Count <= ChatMarkdown.MaxSegments;
 #else
                 false;
 #endif
@@ -244,7 +255,7 @@ namespace ChatFlow
                 md.BackColor = owner.BackColor;
                 md.ForeColor = P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
                 md.Font = new Font(font, font.Style);
-                md.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace) - Dip(FoldGutterWidth));
+                md.Width = Math.Max(Dip(20), _contentWidth - Dip(FoldGutterWidth));
                 _ = md.Handle;
                 BindMarkdownSegments(item.Text, font, reservedWidth);
 #endif
@@ -264,33 +275,36 @@ namespace ChatFlow
             // 思考区底色与聊天背景一致，避免 FCTB 出现色块。
             txtThinking.BackColor = owner.BackColor;
 
-            // 思考区：有内容才显示折叠头；执行中的「思考中…」由末尾的动画行统一提示
+            // 思考区：有内容才显示折叠头；执行中的「思考中…」由末尾的动画行统一提示。
+            // 长思维链拆片后的后续分片没有折叠头，展开态下直接铺开。
             thinkingVisible = item.ThinkingText != null;
-            lblThinking.Visible = thinkingVisible;
+            thinkingHeaderShown = thinkingVisible && !item.IsThinkingContinuation;
+            thinkingBoxShown = thinkingVisible && (item.ThinkingExpanded || item.IsThinkingContinuation);
+            lblThinking.Visible = thinkingHeaderShown;
             lblThinking.Text = item.ThinkingExpanded
                 ? "▼ " + item.ThinkingHeaderText + "（点击折叠）"
                 : "▶ " + item.ThinkingHeaderText + "（点击展开）";
             lblThinking.ForeColor = P != null ? P.ForeDim : Color.Gray;
-            if (thinkingVisible && item.ThinkingExpanded && item.ThinkingText != null)
+            if (thinkingBoxShown && item.ThinkingText != null)
             {
                 txtThinking.SetFontPreserveZoom(GetThinkingFont(font));
                 txtThinking.SetTextCaretEnd(item.ThinkingText);
                 ChatTextStyler.ApplyThinking(txtThinking, item.ThinkingText);
                 txtThinking.ContextMenuStrip = owner.ContextMenuStrip;
             }
-            txtThinking.Visible = thinkingVisible && item.ThinkingExpanded && item.ThinkingText != null;
+            txtThinking.Visible = thinkingBoxShown;
             _binding = false;
 
             // 真实测量：本行在最终宽度下换行后的内容高度
             if (!markdownMode)
             {
-                txt.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
+                txt.Width = _contentWidth;
                 _ = txt.Handle; // 强制创建句柄：FCTB 的 RecalcWordWrap 仅在 Created 时执行，否则换行被推迟
                 txt.NeedRecalc(true, true);
             }
-            if (txtThinking.Visible)
+            if (thinkingBoxShown)
             {
-                txtThinking.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
+                txtThinking.Width = _contentWidth;
                 _ = txtThinking.Handle;
                 txtThinking.NeedRecalc(true, true);
             }
@@ -304,13 +318,35 @@ namespace ChatFlow
             int contentH = markdownMode
                 ? MarkdownContentHeight()
                 : txt.TextHeight + txt.Paddings.Vertical + Dip(4);
-            if (lblThinking.Visible)
+            if (thinkingHeaderShown)
             {
                 contentH += Dip(ThinkingHeaderH); // 折叠头始终占高（折叠时也显示）
-                if (txtThinking.Visible)
-                    contentH += txtThinking.TextHeight + txtThinking.Paddings.Vertical + Dip(4);
+                if (thinkingBoxShown)
+                    contentH += ThinkingBoxHeight();
+            }
+            else if (thinkingBoxShown)
+            {
+                // 后续分片没有折叠头，只有思考区
+                contentH += ThinkingBoxHeight();
             }
             return contentH + Dip(RoleIndent) + Dip(2) + Dip(RowVPad);
+        }
+
+        /// <summary>整行高度的安全上限（设备像素）：Win32 把子窗口位置钳在 ±32767，行再高就摆不到位、底部内容永远滚不到。</summary>
+        private const int MaxRowHeightPx = 30_000;
+
+        private int ThinkingNeedHeight()
+            => txtThinking.TextHeight + txtThinking.Paddings.Vertical + Dip(4);
+
+        /// <summary>展开后的思考区高度：先按内容原样撑开，只有「思考区 + 正文」会超过整行安全上限时才封顶并在盒内滚动。
+        /// 不能按视口高度封顶——那样普通长度的思维链也会白白出现内部滚动条。</summary>
+        private int ThinkingBoxHeight()
+        {
+            int body = markdownMode
+                ? MarkdownContentHeight()
+                : txt.TextHeight + txt.Paddings.Vertical + Dip(4);
+            int room = Math.Max(Dip(120), MaxRowHeightPx - body - Dip(ThinkingHeaderH) - Dip(RowVPad) - Dip(RoleIndent));
+            return Math.Min(ThinkingNeedHeight(), room);
         }
 
 #if NET8_0_OR_GREATER
@@ -346,7 +382,7 @@ namespace ChatFlow
                 idx++;
                 box.BackColor = owner.BackColor;
                 box.Font = new Font(CodeFontFamily, font.Size, font.Style);
-                box.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
+                box.Width = _contentWidth;
                 _ = box.Handle; // 强制创建句柄：RecalcWordWrap 仅在 Created 时执行
                 var language = FastColoredTextBoxNS.Text.LanguageDetector.StringToLanguage(lang ?? "");
                 if (box.Language != language)
@@ -362,20 +398,26 @@ namespace ChatFlow
             }
         }
 
-        private RowTextBox CreateCodeBox() => new()
+        private RowTextBox CreateCodeBox()
         {
-            ReadOnly = true,
-            ShowScrollBars = false,
-            WordWrap = true,
-            ShowLineNumbers = false,
-            TextAreaBorder = TextAreaBorderType.None,
-            Paddings = new Padding(Dip(2)),
-            LeftPadding = Dip(FoldGutterWidth),
-            UseCJK = CJKMode.Hanzi,
-            TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit,
-            Visible = false,
-            TabStop = false,
-        };
+            var box = new RowTextBox
+            {
+                ReadOnly = true,
+                ShowScrollBars = false,
+                WordWrap = true,
+                ShowLineNumbers = false,
+                TextAreaBorder = TextAreaBorderType.None,
+                Paddings = new Padding(Dip(2)),
+                LeftPadding = Dip(FoldGutterWidth),
+                UseCJK = CJKMode.Hanzi,
+                TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit,
+                Visible = false,
+                TabStop = false,
+            };
+            // 折叠/展开后必须重测本行高度：否则行高停在旧值，展开的内容被矮行裁住（看起来点不开）
+            box.FoldingToggled += () => owner.RequestRelayout(this);
+            return box;
+        }
 #endif
 
         private int MarkdownContentHeight()
@@ -383,12 +425,12 @@ namespace ChatFlow
 #if NET8_0_OR_GREATER
             int start = md.SelectionStart;
             int length = md.SelectionLength;
-            int height = md.GetPreferredContentHeight();
+            int height = md.GetPreferredContentHeight() + Dip(4);
             md.Select(start, length);
-            height += Dip(4);
+            // 与 LayoutContent 的纵向堆叠保持一致：每个代码段后面还有 Dip(4) 的间隔，漏算会把末尾裁掉。
             foreach (var box in _codeBoxes)
                 if (box.Visible)
-                    height += box.TextHeight + box.Paddings.Vertical + Dip(4);
+                    height += Math.Max(Dip(10), box.TextHeight + box.Paddings.Vertical + Dip(4)) + Dip(4);
             return height;
 #else
             return 0;
@@ -447,14 +489,16 @@ namespace ChatFlow
             if (Item == null) return;
             bool visible = !string.IsNullOrEmpty(thinkingText);
             thinkingVisible = visible;
-            lblThinking.Visible = visible;
-            if (!visible) { txtThinking.Visible = false; LayoutContent(); return; }
+            thinkingHeaderShown = visible && !Item.IsThinkingContinuation;
+            lblThinking.Visible = thinkingHeaderShown;
+            if (!visible) { thinkingBoxShown = false; txtThinking.Visible = false; LayoutContent(); return; }
             lblThinking.Text = expanded
                 ? "▼ " + Item.ThinkingHeaderText + "（点击折叠）"
                 : "▶ " + Item.ThinkingHeaderText + "（点击展开）";
             lblThinking.ForeColor = P != null ? P.ForeDim : Color.Gray;
-            txtThinking.Visible = visible && expanded && !string.IsNullOrEmpty(thinkingText);
-            if (txtThinking.Visible)
+            thinkingBoxShown = visible && (expanded || Item.IsThinkingContinuation);
+            txtThinking.Visible = thinkingBoxShown;
+            if (thinkingBoxShown)
             {
                 _binding = true;
                 txtThinking.SetTextCaretEnd(thinkingText);
@@ -478,6 +522,18 @@ namespace ChatFlow
                 _ = txt.Handle;
                 txt.NeedRecalc(true, true);
             }
+#if NET8_0_OR_GREATER
+            else
+            {
+                // 折叠/展开只改了行的可见状态，TextHeight 要等 FCTB 重算；不重算会量到旧高度
+                foreach (var box in _codeBoxes)
+                {
+                    if (!box.Visible) continue;
+                    _ = box.Handle;
+                    box.NeedRecalc(true, true);
+                }
+            }
+#endif
             if (txtThinking.Visible)
             {
                 _ = txtThinking.Handle;
@@ -486,19 +542,18 @@ namespace ChatFlow
             return MeasureRow();
         }
 
-        /// <summary>诊断：分配高度与 FCTB 需求高度的差值（正数=裁剪像素数，0=正常）。</summary>
+        /// <summary>展开的思考区当前是否带内部滚动条（诊断：内容超过整行安全上限时才会出现）。</summary>
+        internal bool ThinkingScrolls => thinkingBoxShown && txtThinking.ShowScrollBars;
+
+        /// <summary>诊断：正文文本框的分配高度与需求高度差值（正数=裁剪像素数，0=正常）。
+        /// markdown 模式与「只有思考区」的行没有这个比较对象，直接算 0。</summary>
         public int GetClipping()
         {
             if (markdownMode) return 0;
+            if (string.IsNullOrEmpty(txt.Text)) return 0;
             _ = txt.Handle;
             txt.NeedRecalc(true, true);
             int need = txt.TextHeight + txt.Paddings.Vertical + Dip(4);
-            if (txtThinking.Visible)
-            {
-                _ = txtThinking.Handle;
-                txtThinking.NeedRecalc(true, true);
-                need += txtThinking.TextHeight + txtThinking.Paddings.Vertical + Dip(ThinkingHeaderH) + Dip(4);
-            }
             return Math.Max(0, need - txt.Height);
         }
 
@@ -606,6 +661,8 @@ namespace ChatFlow
         protected override void OnSizeChanged(EventArgs e)
         {
             base.OnSizeChanged(e);
+            // 行宽变了：正文可用宽度随之更新，子控件与高度测量必须用同一个宽度
+            if (Width > 0) _contentWidth = Math.Max(Dip(20), Width - Dip(TextRightSpace));
             LayoutContent();
         }
 
@@ -617,18 +674,31 @@ namespace ChatFlow
             lblRole.SetBounds(Dip(24), Dip(2), Dip(RoleIndent + 20), Dip(20));
 
             int y = Dip(RoleIndent) + Dip(2);
-            if (thinkingVisible)
+            int contentW = ContentWidth;
+            if (thinkingHeaderShown)
             {
-                lblThinking.SetBounds(Dip(RoleIndent), y, Math.Max(Dip(100), Width - Dip(RoleIndent) - Dip(TextRightSpace)), Dip(ThinkingHeaderH));
+                lblThinking.SetBounds(Dip(RoleIndent), y, Math.Max(Dip(100), contentW - Dip(RoleIndent)), Dip(ThinkingHeaderH));
                 y += Dip(ThinkingHeaderH);
-                if (txtThinking.Visible)
-                {
-                    int th = Math.Max(Dip(10), txtThinking.TextHeight + txtThinking.Paddings.Vertical + Dip(4));
-                    txtThinking.SetBounds(0, y, Math.Max(Dip(20), Width - Dip(TextRightSpace)), th);
-                    y += th + Dip(4);
-                }
             }
-            int bodyW = Math.Max(Dip(20), Width - Dip(TextRightSpace));
+            if (thinkingBoxShown)
+            {
+                // 先按最终宽度换行再量高度：宽度不同时 TextHeight 会变，高度算在小宽度上会把正文挤出本行
+                if (txtThinking.Width != contentW)
+                {
+                    txtThinking.Width = contentW;
+                    _ = txtThinking.Handle;
+                    txtThinking.NeedRecalc(true, true);
+                }
+                int th = ThinkingBoxHeight();
+                // 判断依据是「内容比可用空间高」，而不是当前 TextHeight（滚动条会占宽、改变换行，
+                // 用当前 TextHeight 反推会出现「一旦出现就再也关不掉」的粘滞滚动条）。
+                bool scrolls = ThinkingNeedHeight() > th;
+                if (txtThinking.ShowScrollBars != scrolls) txtThinking.ShowScrollBars = scrolls;
+                txtThinking.ScrollSelf = scrolls;
+                txtThinking.SetBounds(0, y, contentW, th);
+                y += th + Dip(4);
+            }
+            int bodyW = Math.Max(Dip(20), contentW);
             int bodyH = Math.Max(Dip(20), Height - y - Dip(RowVPad) / 2);
             txt.SetBounds(0, y, bodyW, bodyH);
 #if NET8_0_OR_GREATER
@@ -659,7 +729,7 @@ namespace ChatFlow
             int gap = Dip(ActionGap);
             int count = (canUndo ? 1 : 0) + (canCopy ? 1 : 0);
             int total = count * size + (count > 1 ? gap : 0);
-            int bx = Math.Max(0, Width - Dip(TextRightSpace) - total);
+            int bx = Math.Max(0, contentW - total);
             int by = Math.Max(0, Height - Dip(RowVPad) - size - Dip(2));
             if (canUndo)
             {
@@ -693,7 +763,7 @@ namespace ChatFlow
         /// <summary>左侧折叠 gutter 内点击后触发（FCTB 已内部完成展开/收起，父容器据此重测行高）。</summary>
         public event Action FoldingToggled;
 
-        /// <summary>点击可点击链接（URL / 图像文件路径）后触发；宿主决定怎么处理。</summary>
+        /// <summary>点击可点击链接（URL / 本地文件路径）后触发；宿主决定怎么处理。</summary>
         public event Action<ChatTextStyler.ChatLinkKind, string> LinkClicked;
 
         /// <summary>右键请求菜单（参数为屏幕坐标）。</summary>
@@ -701,6 +771,9 @@ namespace ChatFlow
 
         /// <summary>当前文本中的可点击链接（ChatTextStyler 赋样式时一并算出，供命中测试）。</summary>
         internal List<ChatTextStyler.ChatLink> LinkSpans;
+
+        /// <summary>true：滚轮滚动本控件自身（内容封顶时用）；false：转发给聊天容器。</summary>
+        public bool ScrollSelf { get; set; }
 
         /// <summary>非链接区域的常规光标（FCTB 构造期设为 IBeam，在此捕获后按需还原）。</summary>
         private readonly Cursor plainCursor;
@@ -712,6 +785,11 @@ namespace ChatFlow
 
         protected override void OnMouseWheel(MouseEventArgs e)
         {
+            if (ScrollSelf)
+            {
+                base.OnMouseWheel(e);   // 内容封顶：滚轮滚动本控件自身
+                return;
+            }
             if (e is HandledMouseEventArgs hme) hme.Handled = true;
             MouseWheelForwarded?.Invoke(e.Delta, ModifierKeys == Keys.Control);
         }
@@ -775,6 +853,64 @@ namespace ChatFlow
         private const int WM_MOUSEWHEEL = 0x020A;
 
         public event Action<int, bool> MouseWheelForwarded;
+
+        /// <summary>点击可点击链接（URL / 本地文件路径）后触发；宿主决定怎么处理。
+        /// new：MarkdownTextBox 自己关掉了 DetectUrls，继承的 RichTextBox.LinkClicked 永不触发，这里整条接过来。</summary>
+        public new event Action<ChatTextStyler.ChatLinkKind, string> LinkClicked;
+
+        private List<ChatTextStyler.ChatLink> linkSpans;
+        private readonly Cursor plainCursor;
+        private Font linkFont;
+
+        public MarkdownRowTextBox()
+        {
+            plainCursor = Cursor ?? Cursors.Default;
+            // MarkdownTextBox 渲染完再把 URL / 图片路径标成超链接外观（它自己关掉了 DetectUrls）
+            TextChanged += (_, _) => { linkSpans = null; ApplyLinkStyle(); };
+        }
+
+        /// <summary>当前渲染文本中的可点击链接（按纯文本偏移，与 GetCharIndexFromPosition 同坐标系）。</summary>
+        private List<ChatTextStyler.ChatLink> LinkSpans => linkSpans ??= ChatTextStyler.CollectLinks(Text);
+
+        private void ApplyLinkStyle()
+        {
+            var links = LinkSpans;
+            if (links.Count == 0) return;
+            Color accent = ChatTheme.Current != null ? ChatTheme.Current.Accent : Color.FromArgb(0x00, 0x66, 0xCC);
+            linkFont ??= new Font(Font, Font.Style | FontStyle.Underline);
+            int selStart = SelectionStart, selLength = SelectionLength;
+            foreach (var link in links)
+            {
+                if (link.Start < 0 || link.Start + link.Length > TextLength) continue;
+                Select(link.Start, link.Length);
+                SelectionColor = accent;
+                SelectionFont = linkFont;
+            }
+            Select(selStart, selLength);
+        }
+
+        protected override void OnFontChanged(EventArgs e)
+        {
+            linkFont?.Dispose();
+            linkFont = null;
+            base.OnFontChanged(e);
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            bool overLink = ChatTextStyler.LinkAt(LinkSpans, GetCharIndexFromPosition(e.Location)) != null;
+            if ((Cursor == Cursors.Hand) != overLink)
+                Cursor = overLink ? Cursors.Hand : plainCursor;
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left) return;
+            var link = ChatTextStyler.LinkAt(LinkSpans, GetCharIndexFromPosition(e.Location));
+            if (link != null) LinkClicked?.Invoke(link.Value.Kind, link.Value.Target);
+        }
 
         protected override void WndProc(ref Message m)
         {

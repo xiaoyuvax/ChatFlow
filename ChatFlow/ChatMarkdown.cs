@@ -30,6 +30,13 @@ namespace ChatFlow
 
         private static readonly Regex FenceLine = new(@"^ {0,3}(?<fence>`{3,}|~{3,})[ \t]*(?<info>[^`]*)$", RegexOptions.Compiled);
 
+        /// <summary>
+        /// 分段渲染（散文段 + 代码段各自成块）只在段数少时启用：块按「先全部散文、再全部代码」堆叠，
+        /// 段一多（Agent 长轨迹：几十个工具结果交替着代码块）阅读顺序就乱了，且控件的测量/布局开销大。
+        /// 超过这个段数改走单文本框，保证顺序与滚动正确。要达到「任意段数都按原序穿插」，需改成每段一个散文块。
+        /// </summary>
+        public const int MaxSegments = 8;
+
         /// <summary>把 markdown 文本切成「散文段 / 围栏代码段」：散文交 MarkdownTextBox，代码段交 FCTB 按语言渲染。
         /// 围栏行本身不进入任何段（只作分隔）；未闭合围栏的剩余部分按代码处理（流式半截安全）。</summary>
         public static List<(bool IsCode, string Content, string Lang)> SplitSegments(string text)
