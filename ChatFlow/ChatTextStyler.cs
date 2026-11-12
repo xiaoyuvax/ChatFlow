@@ -120,8 +120,9 @@ namespace ChatFlow
             RegexOptions.Compiled);
         // 形如「» #3 tool(args) → 成功 · 420ms」：序号可选（历史文本用这种带 » 的旧格式）
         private static readonly Regex ToolCallRegex = new(@"^»\s*(#\d+\s+)?\S+\s*\(.*$", RegexOptions.Compiled | RegexOptions.Multiline);
-        // 新格式「tool(args) · 348ms」：整行不再是工具轨迹标记，只把工具名加粗
-        private static readonly Regex ToolNameRegex = new(@"^[A-Za-z_][\w\-\.]*(?=\()", RegexOptions.Compiled | RegexOptions.Multiline);
+        // 新格式「 >> Tool[args] · 348ms」/ 原生「 >> > Tool[args]」：只认这个形状，正文里的普通函数调用不会被当成工具行
+        private static readonly Regex ToolLineRegex = new(
+            @"^[ \t]*>>[ \t]+(?:>[ \t]+)?(?<name>[A-Za-z_][\w\-\.]*)\[.*$", RegexOptions.Compiled | RegexOptions.Multiline);
         // 旧版时间线格式「[工具] tool(args) · 348ms」（前缀已停用，只为历史会话保留着色）
         private static readonly Regex TimelineToolRegex = new(
             @"^\[工具\]\s+[A-Za-z_][\w\-\.]*(?=\()", RegexOptions.Compiled | RegexOptions.Multiline);
@@ -130,8 +131,10 @@ namespace ChatFlow
         private static readonly Regex ToolOutputRegex = new(@"^\s+(输出|data|error)\s*:.*$", RegexOptions.Compiled | RegexOptions.Multiline);
         private static readonly Regex AttachmentHeaderRegex = new(@"^【附件\s+[^】]*】\r?$", RegexOptions.Compiled | RegexOptions.Multiline);
         private static readonly Regex ReasoningMarkRegex = new(@"^🧠\s*(?<text>.*)$", RegexOptions.Compiled | RegexOptions.Multiline);
-        /// <summary>思考区可折叠块的首行：附件标题 / 🧠 思考标记 / » 旧格式工具轨迹行 / 新格式工具行。</summary>
-        private static readonly Regex FoldableStartRegex = new(@"^(【附件\s+[^】]*】|🧠|»|[A-Za-z_][\w\-\.]*\()", RegexOptions.Compiled | RegexOptions.Multiline);
+        /// <summary>思考区可折叠块的首行：附件标题 / 🧠 思考标记 / » 旧格式工具轨迹行。
+        /// 新格式工具行（&gt;&gt; Tool[...]）是自足的一行，后面没有缩进的输出块，不能当折叠起点
+        /// ——否则它会把后面的正文一段吞进折叠区。</summary>
+        private static readonly Regex FoldableStartRegex = new(@"^(【附件\s+[^】]*】|🧠|»)", RegexOptions.Compiled | RegexOptions.Multiline);
 
         /// <summary>提示词块行首的 markdown 引用号（模型常用 &gt; 逐行标注提示词）。</summary>
         private static readonly Regex BlockquoteLineRegex = new(@"^>\s?", RegexOptions.Compiled);
@@ -197,6 +200,23 @@ namespace ChatFlow
                 int len = m.Length;
                 while (len > 0 && ".,;:!?'\"".IndexOf(m.Value[len - 1]) >= 0) len--;
                 if (len > 0) spans.Add(new TextSpan(m.Index, len));
+            }
+            return spans;
+        }
+
+        /// <summary>工具行里要染色的位置：工具名、左方括号、行尾右方括号。`&gt;&gt;` 前缀、参数与耗时保持正文色。</summary>
+        private static List<TextSpan> CollectToolMarkSpans(string text)
+        {
+            var spans = new List<TextSpan>();
+            if (string.IsNullOrEmpty(text)) return spans;
+            string s = NormalizeNewlines(text);
+            foreach (Match m in ToolLineRegex.Matches(s))
+            {
+                var name = m.Groups["name"];
+                if (name.Success && name.Length > 0)
+                    spans.Add(new TextSpan(name.Index, name.Length + 1));   // 工具名 + '['
+                int close = m.Value.LastIndexOf(']');
+                if (close >= 0) spans.Add(new TextSpan(m.Index + close, 1));
             }
             return spans;
         }
@@ -361,7 +381,7 @@ namespace ChatFlow
                 if (string.IsNullOrEmpty(text)) return;
 
                 range.SetStyle(ToolCallStyle, ToolCallRegex);
-                range.SetStyle(ToolCallStyle, ToolNameRegex);
+                range.SetStyle(ToolCallStyle, TimelineToolRegex);
                 range.SetStyle(ToolCallStyle, TimelineToolRegex);
                 range.SetStyle(ToolOkStyle, ToolOkRegex);
                 range.SetStyle(ToolFailStyle, ToolFailRegex);
@@ -370,6 +390,8 @@ namespace ChatFlow
                 range.SetStyle(ReasoningMarkStyle, ReasoningMarkRegex);
                 // 最后上路径：让灰底输出行里的本地路径也醒目
                 ApplySpanStyles(box, PathStyle, CollectPathSpans(text, requireExtension: false));
+                // 工具行只有「名字」「[」「]」染色，其余（>>、参数、耗时）保持正文色
+                ApplySpanStyles(box, ToolCallStyle, CollectToolMarkSpans(text));
                 range.SetStyle(CodeBlockStyle, FenceRegex);
                 ApplyFencedCodeSyntax(box, text);
                 ApplyBlockFolding(box, text);
@@ -680,16 +702,30 @@ namespace ChatFlow
             }
         }
 
-        /// <summary>括号深度扫描：返回跨多行的 { } / [ ] 块（起始/结束行号 + 起止字符下标，字符串内的括号不计）。</summary>
+        /// <summary>括号深度扫描：返回跨多行的 { } / [ ] 块（起始/结束行号 + 起止字符下标，字符串内的括号不计）。
+        /// 工具行（&gt;&gt; Tool[…] / » tool(…)）整行跳过：参数是压平截断后的摘要，常留半边引号，
+        /// 继续扫下去会把后面的正文当成跨行括号块（FCTB 里表现为凭空多出的折叠区）。</summary>
         private static List<(int startLine, int endLine, int startIndex, int endIndex)> FindMultilineBraceBlocks(string text)
         {
             var blocks = new List<(int, int, int, int)>();
+            string[] lines = text.Split('\n');
+            var isToolLine = new bool[lines.Length];
+            for (int i = 0; i < lines.Length; i++)
+                isToolLine[i] = ToolLineRegex.IsMatch(lines[i]) || ToolCallRegex.IsMatch(lines[i].TrimEnd('\r'));
+
             int line = 0, depth = 0, startLine = -1, startIndex = -1;
             bool inStr = false, esc = false;
             for (int i = 0; i < text.Length; i++)
             {
                 char c = text[i];
-                if (c == '\n') { line++; continue; }
+                if (c == '\n')
+                {
+                    line++;
+                    // 工具行的引号状态不外溢到下一行
+                    if (line < isToolLine.Length && isToolLine[line]) { inStr = false; esc = false; }
+                    continue;
+                }
+                if (line < isToolLine.Length && isToolLine[line]) continue;
                 if (inStr)
                 {
                     if (esc) esc = false;

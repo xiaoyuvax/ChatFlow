@@ -88,7 +88,7 @@ namespace ChatFlow.Tests
                 row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.Assistant), font, 600);
 
                 Assert.True(row.IsMarkdownRendered);
-                int expectedLeft = (int)Math.Round(12 * row.DeviceDpi / 96f);
+                int expectedLeft = (int)Math.Round(ChatMessageRow.FoldGutterWidth * row.DeviceDpi / 96f);
                 int expectedTop = (int)Math.Round(26 * row.DeviceDpi / 96f);
                 Assert.Equal(expectedLeft, row.MarkdownBox.Left);
                 Assert.Equal(expectedTop, row.MarkdownBox.Top);

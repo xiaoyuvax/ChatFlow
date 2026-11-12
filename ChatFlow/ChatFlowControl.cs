@@ -24,6 +24,10 @@ namespace ChatFlow
         private readonly VScrollBar vbar = new();
         /// <summary>底部居中的「跳到末尾」浮动按钮（不在末尾时显示）。</summary>
         private readonly JumpToEndButton jumpToEndButton;
+        /// <summary>顶部浮动的「思考与工具过程」折叠头替身：原折叠头被滚出可见区时顶替它，点一下即折叠。</summary>
+        private readonly StickyThinkingBar stickyThinking = new();
+        /// <summary>当前顶替的是哪一块（点击折叠用）。</summary>
+        private ChatFlowItem stickyTarget;
         /// <summary>内部改滚动值中：此时的 ValueChanged 不算「用户拖动」，不改变「跟随末尾」状态。</summary>
         private bool settingScrollInternally;
 
@@ -222,6 +226,10 @@ namespace ChatFlow
             Controls.Add(jumpToEndButton);
             jumpTip.SetToolTip(jumpToEndButton, "跳到末尾（回到最新内容并恢复自动跟随）");
 
+            // 顶部浮动的折叠头替身：长过程滚到看不见原折叠头时，用它就地折叠
+            stickyThinking.Click += (_, _) => CollapseStickyThinking();
+            Controls.Add(stickyThinking);
+
             ChatTheme.Changed += OnAppThemeChanged;
         }
 
@@ -280,6 +288,70 @@ namespace ChatFlow
             jumpToEndButton.BringToFront();
         }
 
+        private int Dip(int value) => (int)Math.Round(value * DeviceDpi / 96.0);
+
+        /// <summary>顶部折叠头替身：找出「折叠头已滚出视口、但这一块还盖着视口顶部」的最后一个展开块。
+        /// 多个块叠着滚过去时取最靠下的那个 —— 用户正看的就是它。</summary>
+        private ChatFlowItem FindStickyTarget(int viewTop)
+        {
+            ChatFlowItem target = null;
+            if (prefixSum.Length < items.Count + 1) return null;
+            for (int i = 0; i < items.Count; i++)
+            {
+                var item = items[i];
+                if (item.Kind != ChatFlowItemKind.Assistant) continue;
+                if (item.ThinkingText == null || item.IsThinkingContinuation || !item.ThinkingExpanded) continue;
+                int headerY = prefixSum[i] + Dip((item.IsContinuation ? 0 : ChatMessageRow.RoleIndent) + 2);
+                // 长过程会被拆成多片（只有第一片有折叠头）：块的底部要算到同一轮的最后一片
+                int last = i;
+                while (last + 1 < items.Count && items[last + 1].Turn == item.Turn) last++;
+                if (headerY >= viewTop || prefixSum[last + 1] <= viewTop) continue;
+                target = item;
+            }
+            return target;
+        }
+
+        /// <summary>按当前滚动位置显隐并定位顶部替身条：文案、字体、水平位置、行高都与原折叠头一致。</summary>
+        private void UpdateStickyThinking()
+        {
+            if (stickyThinking == null || IsDisposed) return;
+            stickyTarget = FindStickyTarget(vbar.Visible ? vbar.Value : 0);
+            if (stickyTarget == null)
+            {
+                if (stickyThinking.Visible) stickyThinking.Visible = false;
+                return;
+            }
+
+            stickyThinking.Text = "▼ " + stickyTarget.ThinkingHeaderText + "（点击折叠）";
+            stickyThinking.ForeColor = ChatTheme.Current?.ForeDim ?? Color.Gray;
+            stickyThinking.BackColor = BackColor;   // 不透明：盖住下面的正文
+            int contentW = Math.Max(1, ClientSize.Width - (vbar.Visible ? vbar.Width : 0));
+            // 整行铺满（左侧不留缝），文字仍与行内折叠头的 x 对齐
+            stickyThinking.TextIndent = Dip(ChatMessageRow.RoleIndent);
+            stickyThinking.Bounds = new Rectangle(0, 0, contentW, Dip(ChatMessageRow.ThinkingHeaderH));
+            if (!stickyThinking.Visible) stickyThinking.Visible = true;
+            stickyThinking.Invalidate();
+            stickyThinking.BringToFront();
+        }
+
+        /// <summary>点替身条：折叠该块，并把视口滚回原折叠头处（折叠头贴住顶部），替身随即隐藏。</summary>
+        private void CollapseStickyThinking()
+        {
+            var turn = stickyTarget?.Turn;
+            if (turn == null) return;
+            turn.ThinkingExpanded = false;
+            autoScrollToEnd = false;
+            DataSource?.RaiseChanged();   // → RebuildItems：行高与条目全量重建
+            var item = items.FirstOrDefault(i =>
+                i.Turn == turn && i.ThinkingText != null && !i.IsThinkingContinuation);
+            int idx = item != null ? items.IndexOf(item) : -1;
+            if (idx >= 0 && vbar.Visible)
+                SetScrollValueInternal(Math.Min(prefixSum[idx], MaxScrollValue));
+            Relayout();
+            UpdateJumpToEndButton();
+            UpdateStickyThinking();
+        }
+
         /// <summary>主题切换：底色换调色板、按新调色板重建聊天样式并重绑所有已实现行（行内配色/正文样式都在 Bind 里）。</summary>
         private void OnAppThemeChanged()
         {
@@ -292,6 +364,7 @@ namespace ChatFlow
             }
             Relayout();
             jumpToEndButton?.Invalidate();
+            stickyThinking?.Invalidate();
         }
 
         protected override void Dispose(bool disposing)
@@ -373,7 +446,7 @@ namespace ChatFlow
                         string thinking = message.ThinkingText;
                         if (turn.Streaming && answer.Length == 0 && thinking == null)
                             lastMessage = null;   // 还没出字也没有思考区：这一行只会是「空白文本框」，位置留给末尾的指示行
-                        else if (thinking != null && thinking.Length > MaxItemChars && turn.ThinkingExpanded == true)
+                        else if (thinking != null && thinking.Length > MaxItemChars && message.ThinkingExpanded)
                         {
                             // 展开的长思维链按行拆片：单片仍远低于整行高度上限（Win32 把控件位置钳在 ±32767），
                             // 这样展开后不需要内部滚动条。后续分片不再显示折叠头，答复挂在最后一片。
@@ -585,6 +658,7 @@ namespace ChatFlow
                 inLayout = false;
             }
             UpdateJumpToEndButton();   // 内容/视口变化后同步浮动按钮显隐与位置
+            UpdateStickyThinking();    // 折叠头被滚出可见区时，在顶部顶替它
         }
 
         /// <summary>行内折叠（代码块展开/收起）后：重测该行高度并重排，行高随折叠收缩/展开。</summary>
@@ -1054,6 +1128,52 @@ namespace ChatFlow
         }
 
         /// <summary>
+        /// 顶部的「思考与工具过程」折叠头替身：原折叠头被滚出可见区后在这里顶替它，
+        /// 文案/字体/横向位置/行高都与行内折叠头一致，点一下即折叠那一块。
+        /// </summary>
+        private sealed class StickyThinkingBar : Control
+        {
+            private readonly Font headerFont = new("Microsoft YaHei UI", 7.5F);
+
+            /// <summary>文字左侧内缩（像素）：与行内折叠头的 x 对齐，底色仍铺满整行。</summary>
+            public int TextIndent { get; set; }
+
+            public StickyThinkingBar()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                    | ControlStyles.UserPaint, true);
+                Font = headerFont;   // 与行内折叠头同字体
+                Cursor = Cursors.Hand;
+                TabStop = false;
+                Visible = false;
+            }
+
+            /// <summary>滚轮转发给宿主（替身条悬在正文之上，滚轮仍应滚动聊天区）。</summary>
+            protected override void OnMouseWheel(MouseEventArgs e)
+            {
+                (Parent as ChatFlowControl)?.ForwardWheel(e.Delta, ModifierKeys == Keys.Control);
+                if (e is HandledMouseEventArgs hme) hme.Handled = true;
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                using (var back = new SolidBrush(BackColor))
+                    e.Graphics.FillRectangle(back, ClientRectangle);
+                int indent = Math.Min(TextIndent, Math.Max(0, Width - 10));
+                var rect = new Rectangle(indent, 0, Math.Max(10, Width - indent), Height);
+                TextRenderer.DrawText(e.Graphics, Text, headerFont, rect, ForeColor,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter
+                    | TextFormatFlags.SingleLine | TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
+            }
+
+            protected override void Dispose(bool disposing)
+            {
+                if (disposing) headerFont.Dispose();
+                base.Dispose(disposing);
+            }
+        }
+
+        /// <summary>
         /// 「跳到末尾」浮动按钮：圆形底 + 向下箭头（复用 arrow_up_color_16xLG 旋转 180°）。
         /// 用圆形 Region 裁掉方形边角 —— 深/浅底上都不会出现难看的透明方块边；配色取当前调色板。
         /// </summary>
@@ -1310,8 +1430,9 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         private static string FormatDuration(long ms)
             => ms < 1000 ? $"{ms}ms" : $"{ms / 1000.0:0.0}s";
 
-        /// <summary>思考区是否展开（数据侧持有，跨重建保留；null=未交互按折叠）。</summary>
-        public bool ThinkingExpanded => Turn.ThinkingExpanded ?? false;
+        /// <summary>思考区是否展开（数据侧持有，跨重建保留；null=未交互按时间线有无决定：
+        /// 有时间线（思维与工具交替）默认展开，否则看不到交错过程；纯推理仍折叠）。</summary>
+        public bool ThinkingExpanded => Turn.ThinkingExpanded ?? !string.IsNullOrEmpty(Turn.TimelineText);
 
         /// <summary>切换思考区展开状态（重排由调用方触发）。</summary>
         public void ToggleThinking()

@@ -120,6 +120,24 @@ namespace ChatFlow.Tests
 
             Assert.Equal("最终回答", item.Text);
             Assert.Equal("先看仓库。\n\nGrep(a) · 1s", item.ThinkingText);
+            // 有时间线就默认展开，否则看不到思维与工具的交错过程
+            Assert.True(item.ThinkingExpanded);
+        }
+
+        [Fact]
+        public void ThinkingExpanded_DefaultsCollapsedWithoutTimeline()
+        {
+            var turn = new ChatTurn
+            {
+                Assistant = new ChatMessage("assistant", ""),
+                ReasoningText = "先看仓库。"
+            };
+            var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
+            Assert.False(item.ThinkingExpanded);
+
+            turn.ThinkingExpanded = false;   // 用户手动折叠过：时间线也不再自动展开
+            turn.TimelineText = "先看仓库。\n\nGrep(a) · 1s";
+            Assert.False(item.ThinkingExpanded);
         }
 
         [Fact]

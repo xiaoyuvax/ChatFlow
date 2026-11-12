@@ -9,13 +9,13 @@
     <LangVersion>13</LangVersion>
     <RootNamespace>ChatFlow</RootNamespace>
     <AssemblyName>ChatFlow</AssemblyName>
-    <Version>0.1.11</Version>
+    <Version>0.1.12</Version>
     <NoWarn>WFO1000</NoWarn>
   </PropertyGroup>
 
   <!-- FCTB 只消费 NuGet 包：源码/包两套身份会让同一份 ChatFlow 代码在不同机器上编出不同依赖闭包。 -->
   <ItemGroup>
-    <PackageReference Include="Vax-FCTB" Version="2.19.0.228" />
+    <PackageReference Include="Vax-FCTB" Version="2.19.0.229" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' != 'net7.0-windows7.0'">

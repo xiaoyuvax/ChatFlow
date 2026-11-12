@@ -14,8 +14,9 @@ namespace ChatFlow
         public const int RoleIndent = 24;      // 角色标签行高度
         public const int TextRightSpace = 8;   // 文本右侧留白
         private const int RowVPad = 8;         // 行上下留白
-        private const int ThinkingHeaderH = 18; // 思考区折叠头高度
-        private const int FoldGutterWidth = 12; // FCTB 左侧折叠 gutter（○ 标记可见所需宽度）
+        internal const int ThinkingHeaderH = 18; // 思考区折叠头高度（浮动顶替条也用它对齐）
+        internal const int FoldGutterWidth = 16; // FCTB 左侧折叠 gutter（FCTB 的 + 标记固定像素，DPI 高了会很小，得留宽些）
+        private const int FoldMarkerSize = 8;   // 折叠 + 标记边长（DIP）；FCTB 默认 8 物理像素，250% 下点不中
         private const int ActionSize = 24;      // 右下角操作按钮边长
         private const int ActionGap = 4;        // 两个按钮间距
         private const int ActionZoneW = 132;    // 右下角悬停感应区宽
@@ -108,7 +109,8 @@ namespace ChatFlow
                 ShowLineNumbers = false,
                 TextAreaBorder = TextAreaBorderType.None,
                 Paddings = new Padding(Dip(2)),
-                LeftPadding = Dip(FoldGutterWidth), // 左侧 gutter：代码块折叠 ○ 标记需此宽度才可见可点
+                LeftPadding = Dip(FoldGutterWidth), // 左侧 gutter：代码块折叠 + 标记需此宽度才可见可点
+                DefaultMarkerSize = Dip(FoldMarkerSize),
                 UseCJK = CJKMode.Hanzi,
                 TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit, // 消锯齿（双缓冲面下 ClearType 不可用）
                 AllowProportionalFont = true, // 聊天区用比例字体（只读；Tab/列选择不可用）
@@ -140,6 +142,7 @@ namespace ChatFlow
                 TextAreaBorder = TextAreaBorderType.None,
                 Paddings = new Padding(Dip(2)),
                 LeftPadding = Dip(FoldGutterWidth),
+                DefaultMarkerSize = Dip(FoldMarkerSize),
                 UseCJK = CJKMode.Hanzi,
                 BackColor = owner.BackColor,
                 Visible = false,
@@ -391,6 +394,7 @@ namespace ChatFlow
                 TextAreaBorder = TextAreaBorderType.None,
                 Paddings = new Padding(Dip(2)),
                 LeftPadding = Dip(FoldGutterWidth),
+                DefaultMarkerSize = Dip(FoldMarkerSize),
                 UseCJK = CJKMode.Hanzi,
                 TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit,
                 Visible = false,

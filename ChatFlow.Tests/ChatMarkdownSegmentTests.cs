@@ -83,7 +83,7 @@ namespace ChatFlow.Tests
             }
         }
 
-        /// <summary>思维链走 FCTB（默认折叠、可展开），只有答复正文用 MarkdownTextBox。</summary>
+        /// <summary>思维链走 FCTB（时间线默认展开、可折叠），只有答复正文用 MarkdownTextBox。</summary>
         [StaFact]
         public void TimelineThinking_IsCollapsedFctb_AndOnlyAnswerIsMarkdown()
         {
@@ -99,13 +99,14 @@ namespace ChatFlow.Tests
                 {
                     User = new ChatMessage("user", "问题"),
                     Assistant = new ChatMessage("assistant", "## 答\n\n正文"),
-                    TimelineText = "**思维**\n\n```\ncode\n```"
+                    TimelineText = "**思维**\n\n```\ncode\n```",
+                    ThinkingExpanded = false
                 });
                 flow.Bind(book);
                 var row = AssistantRow(flow);
                 Assert.NotNull(row);
                 Assert.True(row.IsMarkdownRendered);      // 答复走 MarkdownTextBox
-                Assert.False(row.ThinkingBox.Visible);    // 思维链默认折叠
+                Assert.False(row.ThinkingBox.Visible);    // 手动折叠后不展开
                 Assert.DoesNotContain("**思维**", row.BodyBox.Text);
 
                 book.Turns[0].ThinkingExpanded = true;

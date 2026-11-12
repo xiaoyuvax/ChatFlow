@@ -208,6 +208,90 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
+        public void Thinking_NativeToolMarker_KeepsNameStyled()
+        {
+            // 原生调用带 > 标记：标记本身不染色，工具名和方括号照旧
+            using var box = NewBox();
+            string text = " >> > Shell[command=dir] · 1.2s";
+            box.Text = text;
+            ChatTextStyler.ApplyThinking(box, text);
+
+            Assert.True(HasStyle(box[0], text.IndexOf("Shell", StringComparison.Ordinal), ChatTextStyler.ToolCallStyleField),
+                "> 前缀下的工具名未着色");
+            Assert.True(HasStyle(box[0], text.IndexOf('[', StringComparison.Ordinal), ChatTextStyler.ToolCallStyleField));
+            Assert.True(HasStyle(box[0], text.LastIndexOf(']'), ChatTextStyler.ToolCallStyleField));
+            Assert.False(HasStyle(box[0], text.IndexOf("> Shell", StringComparison.Ordinal), ChatTextStyler.ToolCallStyleField),
+                "> 标记不该染色");
+        }
+
+        [StaFact]
+        public void Thinking_NewToolLine_DoesNotStartFoldBlock()
+        {
+            // 工具行后面紧跟正文时，不能被当成折叠区起点（会把后续正文吞进折叠块）
+            using var box = NewBox();
+            string text = " >> Shell[command=git push] · 5.2s\nPush succeeded. Now tag and release.\nWrite notes file.";
+            box.Text = text;
+            ChatTextStyler.ApplyThinking(box, text);
+
+            Assert.False(ChatTextStyler.IsFoldStart(box, 0), "新格式工具行不该形成折叠区");
+            Assert.False(ChatTextStyler.IsFoldStart(box, 1), "正文不该被拖进折叠区");
+        }
+
+        [StaFact]
+        public void Thinking_ToolLineWithTruncatedQuotedArgs_DoesNotFoldFollowingProse()
+        {
+            // 工具行参数压平成一行时会被截断（…），常留半边引号；方括号扫描不能顺着它把后面的正文吞成折叠块
+            using var box = NewBox();
+            string text =
+                " >> > Shell[command=powershell -NoProfile -Command \"Get-ChildItem -Path . -Filter appsettings*.json -Recurse -Depth 2 | Select-Objec…] · 1.1s\n" +
+                "\n" +
+                "The tool-call line apparently didn't get executed (no tool-result came back; instead my shell call ran).\n" +
+                "So Puppet must be reached via HTTP from the shell: zcurl. Let's find the key name in appsettings.json.\n" +
+                "\n" +
+                " >> > Shell[command=powershell -NoProfile -Command \"$j=[IO.File]::ReadAllText('appsettings.json',[Text.Encoding]::UTF8) | ConvertFro…] · 808ms\n" +
+                "继续正文";
+            box.Text = text;
+            ChatTextStyler.ApplyThinking(box, text);
+
+            for (int i = 0; i < box.LinesCount; i++)
+                Assert.False(ChatTextStyler.IsFoldStart(box, i), $"第 {i} 行不该成为折叠区起点");
+            Assert.Equal(VisibleState.Visible, box.GetVisibleState(2));
+        }
+
+        [StaFact]
+        public void Thinking_NewToolLine_StylesOnlyNameAndBrackets()
+        {
+            using var box = NewBox();
+            string text = " >> Shell[command=git status --short] · 1.2s";
+            box.Text = text;
+            ChatTextStyler.ApplyThinking(box, text);
+
+            var chars = box[0];
+            int name = text.IndexOf("Shell", StringComparison.Ordinal);
+            int open = text.IndexOf('[', StringComparison.Ordinal);
+            int close = text.LastIndexOf(']');
+            for (int i = name; i <= open; i++)
+                Assert.True(HasStyle(chars, i, ChatTextStyler.ToolCallStyleField), $"第 {i} 个字符没染色：{text[i]}");
+            Assert.True(HasStyle(chars, close, ChatTextStyler.ToolCallStyleField), "右方括号没染色");
+            // 前缀、参数、耗时保持正文色
+            Assert.False(HasStyle(chars, 1, ChatTextStyler.ToolCallStyleField), ">> 前缀不该染色");
+            Assert.False(HasStyle(chars, open + 1, ChatTextStyler.ToolCallStyleField), "参数不该染色");
+            Assert.False(HasStyle(chars, close + 1, ChatTextStyler.ToolCallStyleField), "耗时不染色");
+        }
+
+        [StaFact]
+        public void Thinking_PlainFunctionCall_IsNotStyledAsTool()
+        {
+            // 正文里的普通函数调用不能当工具行：此前整行被当成工具调用染色
+            using var box = NewBox();
+            string text = "Application.SetHighDpiMode(HighDpiMode.SystemAware);";
+            box.Text = text;
+            ChatTextStyler.ApplyThinking(box, text);
+
+            Assert.False(HasStyle(box[0], 0, ChatTextStyler.ToolCallStyleField), "普通函数调用被误判成工具行");
+        }
+
+        [StaFact]
         public void Thinking_BlocksFoldUntilBlankLine()
         {
             using var box = NewBox();
@@ -257,13 +341,15 @@ namespace ChatFlow.Tests
         [StaFact]
         public void Thinking_TimelineToolLine_GetsToolStyle()
         {
-            // 时间线工具行（RunTimeline.Render）没有前缀：tool(args) · 1ms，工具名仍要醒目
+            // 时间线工具行（RunTimeline.Render）：形如 ` >> Tool[args] · 1ms`
             using var box = NewBox();
-            string text = "先看仓库。\n\nReadFile(offset=1, path=src/A.cs) · 1ms";
+            string text = "先看仓库。\n\n >> ReadFile[offset=1, path=src/A.cs] · 1ms";
             box.Text = text;
             ChatTextStyler.ApplyThinking(box, text);
 
-            Assert.True(HasStyle(box[2], 0, ChatTextStyler.ToolCallStyleField), "时间线工具行的工具名未着色");
+            string line = " >> ReadFile[offset=1, path=src/A.cs] · 1ms";
+            Assert.True(HasStyle(box[2], line.IndexOf("ReadFile", StringComparison.Ordinal), ChatTextStyler.ToolCallStyleField),
+                "时间线工具行的工具名未着色");
         }
 
         private static bool HasStyle(Line line, int charIndex, Style style)
