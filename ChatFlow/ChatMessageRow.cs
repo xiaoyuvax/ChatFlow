@@ -92,8 +92,7 @@ namespace ChatFlow
 
             lblRole = new Label
             {
-                AutoSize = false,
-                Size = new Size(Dip(RoleIndent + 20), Dip(20)),
+                AutoSize = true,
                 Location = new Point(Dip(24), Dip(2)),
                 TextAlign = ContentAlignment.MiddleLeft,
                 ForeColor = Color.DimGray,
@@ -209,7 +208,9 @@ namespace ChatFlow
             chk.ContextMenuStrip = owner.ContextMenuStrip;
             lblRole.ContextMenuStrip = owner.ContextMenuStrip;
             txt.ContextMenuStrip = owner.ContextMenuStrip;
-            lblRole.Text = item.IsUser ? "用户" : (item.IsContinuation ? "AI（续）" : "AI");
+            lblRole.Text = item.IsUser ? "用户" : "AI";
+            // 超长正文的续片不显示角色标签：拆片只是绕高度上限，用户不该看见接缝
+            lblRole.Visible = !item.IsContinuation;
             lblRole.ForeColor = P != null ? P.Accent : (item.IsUser ? Color.SteelBlue : Color.SeaGreen);
             bool useMarkdown =
 #if NET8_0_OR_GREATER
@@ -241,7 +242,8 @@ namespace ChatFlow
             ShowMarkdown(useMarkdown);
             bodyShown = !string.IsNullOrEmpty(item.Text);
             chk.Checked = item.Turn.Selected;
-            chk.Visible = _showSelection;
+            // 勾选按整轮生效、由第一片代表：续片不单独出勾选框，免得只取消其中一段
+            chk.Visible = _showSelection && !item.IsContinuation;
             txt.BackColor = owner.BackColor;
             txt.ForeColor = P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
             txtThinking.ForeColor = P != null ? P.ChatThinkingFore : Color.FromArgb(0x5F, 0x6E, 0x7E);
@@ -316,7 +318,8 @@ namespace ChatFlow
                 // 后续分片没有折叠头，只有思考区
                 contentH += ThinkingBoxHeight();
             }
-            return contentH + Dip(RoleIndent) + Dip(2) + Dip(RowVPad);
+            int role = Item?.IsContinuation == true ? 0 : Dip(RoleIndent);
+            return contentH + role + Dip(2) + Dip(RowVPad);
         }
 
         /// <summary>整行高度的安全上限（设备像素）：Win32 把子窗口位置钳在 ±32767，行再高就摆不到位、底部内容永远滚不到。</summary>
@@ -615,7 +618,7 @@ namespace ChatFlow
             {
                 if (_showSelection == value) return;
                 _showSelection = value;
-                chk.Visible = value;
+                chk.Visible = value && Item?.IsContinuation != true;
             }
         }
 
@@ -716,9 +719,11 @@ namespace ChatFlow
         private void LayoutContent()
         {
             chk.SetBounds(Dip(2), Dip(2), Dip(20), Dip(20));
-            lblRole.SetBounds(Dip(24), Dip(2), Dip(RoleIndent + 20), Dip(20));
+            bool continuation = Item?.IsContinuation == true;
+            lblRole.Visible = !continuation;
+            if (!continuation) lblRole.Location = new Point(Dip(24), Dip(2));
 
-            int y = Dip(RoleIndent) + Dip(2);
+            int y = (continuation ? 0 : Dip(RoleIndent)) + Dip(2);
             int contentW = ContentWidth;
             if (thinkingHeaderShown)
             {

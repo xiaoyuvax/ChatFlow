@@ -84,6 +84,56 @@ namespace ChatFlow.Tests
             }
         }
 
+        [StaFact]
+        public void ContinuationPiece_HidesRoleLabel_AndJoinsText()
+        {
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "问"),
+                Assistant = new ChatMessage("assistant", new string('答', 150)),
+            };
+            using var owner = new ChatFlowControl();
+            using var first = new ChatMessageRow(owner);
+            using var next = new ChatMessageRow(owner);
+            using var host = new WF.Form();
+            host.Controls.Add(first);
+            host.Controls.Add(next);
+            host.Show();
+            try
+            {
+                var font = new Font("Consolas", 9.75F);
+                first.ShowSelection = true;
+                next.ShowSelection = true;
+                int firstH = first.Bind(new ChatFlowItem(turn, ChatFlowItemKind.Assistant), font, 600);
+                int nextH = next.Bind(
+                    new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { IsContinuation = true }, font, 600);
+
+                Assert.True(CheckBoxOf(first).Visible, "整轮勾选框挂第一片");
+                Assert.False(CheckBoxOf(next).Visible, "续片不单独出勾选框，避免只取消其中一段");
+
+                Assert.False(RoleLabel(next).Visible, "续片不该显示「AI（续）」之类的角色标签");
+                var role = RoleLabel(first);
+                Assert.True(role.AutoSize, "角色标签必须自适应宽度，否则更长的文案会被裁掉");
+                Assert.True(role.Width >= role.GetPreferredSize(Size.Empty).Width, "标签宽度容得下完整文案");
+                Assert.True(next.BodyBox.Top < first.BodyBox.Top, "续片正文应上移到角色标签行原来的位置");
+                Assert.True(nextH < firstH, "续片不再为角色标签行留高度");
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        private static WF.Label RoleLabel(object row)
+            => (WF.Label)row.GetType()
+                .GetField("lblRole", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .GetValue(row)!;
+
+        private static WF.CheckBox CheckBoxOf(object row)
+            => (WF.CheckBox)row.GetType()
+                .GetField("chk", BindingFlags.NonPublic | BindingFlags.Instance)!
+                .GetValue(row)!;
+
         private static List<ChatFlowItem> Items(ChatFlowControl flow)
             => (List<ChatFlowItem>)typeof(ChatFlowControl)
                 .GetField("items", BindingFlags.NonPublic | BindingFlags.Instance)!
