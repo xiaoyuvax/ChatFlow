@@ -988,6 +988,14 @@ namespace ChatFlow
                 if (item == null) return;
             }
 
+            // 「工作中…」指示行只在还没出字时存在：一旦出字或这一轮结束，就地重绑删不掉它，得整表重建
+            if (items.Any(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Thinking)
+                && (!turn.Streaming || new ChatFlowItem(turn, ChatFlowItemKind.Assistant).Text.Length > 0))
+            {
+                RebuildItems();
+                return;
+            }
+
             if (!force && (DateTime.UtcNow - lastStreamingRebuild).TotalMilliseconds < 250)
                 return; // 节流窗口内跳过：数据侧已是最新，下次触发会带上全部增量
             lastStreamingRebuild = DateTime.UtcNow;

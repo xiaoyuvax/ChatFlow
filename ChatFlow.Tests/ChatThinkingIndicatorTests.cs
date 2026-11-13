@@ -136,6 +136,67 @@ namespace ChatFlow.Tests
             }
         }
 
+        [StaFact]
+        public void StreamingTurn_BodyArrivesViaStreamingUpdate_RemovesThinkingIndicator()
+        {
+            // 现场：先有思考区（助手行已实例化），正文随后流式到达；此时走就地重绑，指示行也得撤掉
+            using var flow = new ChatFlowControl { Size = new Size(600, 400) };
+            using var host = new WF.Form();
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var book = new ChatTurnBook();
+                var turn = NewStreamingTurn();
+                turn.ReasoningText = "先看仓库结构。";
+                book.AddTurn(turn);
+                flow.Bind(book);
+                Application.DoEvents();
+                Assert.Equal(1, ThinkingRowCount(flow));
+
+                turn.AssistantText = "先说结论：";
+                flow.UpdateStreamingMessage(turn, "先说结论：");
+
+                Assert.DoesNotContain(Items(flow), item => item.Kind == ChatFlowItemKind.Thinking);
+                Application.DoEvents();
+                Assert.Equal(0, ThinkingRowCount(flow));
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        [StaFact]
+        public void StreamingEnded_WithoutBody_RemovesThinkingIndicatorViaStreamingUpdate()
+        {
+            using var flow = new ChatFlowControl { Size = new Size(600, 400) };
+            using var host = new WF.Form();
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var book = new ChatTurnBook();
+                var turn = NewStreamingTurn();
+                turn.ReasoningText = "先看仓库结构。";
+                book.AddTurn(turn);
+                flow.Bind(book);
+                Application.DoEvents();
+                Assert.Equal(1, ThinkingRowCount(flow));
+
+                turn.Streaming = false;
+                flow.UpdateStreamingMessage(turn, "");
+
+                Assert.DoesNotContain(Items(flow), item => item.Kind == ChatFlowItemKind.Thinking);
+                Application.DoEvents();
+                Assert.Equal(0, ThinkingRowCount(flow));
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
         private static ChatTurn NewStreamingTurn() => new()
         {
             User = new ChatMessage("user", "帮我整理一下这次改动"),
