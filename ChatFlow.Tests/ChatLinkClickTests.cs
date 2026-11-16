@@ -174,6 +174,46 @@ namespace ChatFlow.Tests
             }
         }
 
+        /// <summary>
+        /// markdown 分支的行级转发：散文块是独立控件，点 URL 要经 row.LinkClicked 传出去。
+        /// 漏接订阅时宿主收不到事件，用户点了没任何反应（FCTB 分支靠 txt 的订阅，散文块曾经漏了）。
+        /// </summary>
+        [StaFact]
+        public void MarkdownRow_ClickOnUrl_ForwardsToRow()
+        {
+            using var ownerFlow = new ChatFlowControl();
+            using var row = new ChatMessageRow(ownerFlow);
+            var host = new Form { Size = new Size(900, 400) };
+            host.Controls.Add(row);
+            host.Show();
+            try
+            {
+                var turn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "起服务"),
+                    Assistant = new ChatMessage("assistant", "服务在 **https://example.com/doc** 上跑"),
+                };
+                row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.Assistant), new Font("Consolas", 9.75F), 800);
+                Assert.True(row.IsMarkdownRendered);
+
+                var prose = row.Controls.OfType<MarkdownRowTextBox>().First();
+                (string kind, string target) fired = default;
+                row.LinkClicked += (_, kind, target) => fired = (kind.ToString(), target);
+
+                int at = prose.Text.IndexOf("https://example.com/doc", StringComparison.Ordinal);
+                Assert.True(at >= 0, $"Markdown 渲染后的纯文本里找不到 URL：{prose.Text}");
+                ClickAt(prose, prose.GetPositionFromCharIndex(at + 5));
+
+                Assert.Equal("Url", fired.kind);
+                Assert.Equal("https://example.com/doc", fired.target);
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
         private static void ClickAt(MarkdownRowTextBox box, Point at)
         {
             var onClick = typeof(MarkdownRowTextBox).GetMethod(

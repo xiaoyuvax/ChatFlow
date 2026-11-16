@@ -417,6 +417,8 @@ namespace ChatFlow
                 BackColor = owner.BackColor,
             };
             prose.MouseWheelForwarded += (delta, ctrl) => owner.ForwardWheel(delta, ctrl);
+            // markdown 散文块是独立控件，行级 LinkClicked 不会自己传上来（FCTB 分支靠 txt 的订阅）
+            prose.LinkClicked += (kind, target) => LinkClicked?.Invoke(Item, kind, target);
             prose.MouseUp += (_, e) =>
             {
                 if (e.Button == MouseButtons.Right)
