@@ -427,6 +427,15 @@ namespace ChatFlow.Tests
         }
 
         [Fact]
+        public void CollectLinks_Url_MarkdownBoldMarkersNotPartOfUrl()
+        {
+            // **http://127.0.0.1:5080** 尾部的 ** 是粗体标记，不能算进 URL（否则点击目标带上星号直接打不开）
+            var link = Assert.Single(ChatTextStyler.CollectLinks("服务在 **http://127.0.0.1:5080** 上跑"));
+            Assert.Equal(ChatTextStyler.ChatLinkKind.Url, link.Kind);
+            Assert.Equal("http://127.0.0.1:5080", link.Target);
+        }
+
+        [Fact]
         public void CollectLinks_ExtensionlessToolPath_DoesNotBacktrackExponentially()
         {
             // 回归：ListDir(path=C:/Users/.../OpenLoop) 这类无扩展名长路径曾让 CollectLinks 回溯爆炸（UI 卡死数分钟）

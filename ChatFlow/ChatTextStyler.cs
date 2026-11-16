@@ -190,7 +190,8 @@ namespace ChatFlow
         private static string NormalizeNewlines(string text)
             => text.IndexOf('\r') < 0 ? text : text.Replace("\r\n", "\n");
 
-        /// <summary>URL 区间：遇空白/引号/中文标点等非法 URL 字符即中断，再去掉句末标点。</summary>
+        /// <summary>URL 区间：遇空白/引号/中文标点等非法 URL 字符即中断，再去掉句末标点与 markdown 包裹符
+        /// （<c>**http://x**</c> 尾部两个星号是粗体标记，不是 URL 的一部分）。</summary>
         internal static List<TextSpan> CollectUrlSpans(string text)
         {
             var spans = new List<TextSpan>();
@@ -198,7 +199,7 @@ namespace ChatFlow
             foreach (Match m in UrlRegex.Matches(NormalizeNewlines(text)))
             {
                 int len = m.Length;
-                while (len > 0 && ".,;:!?'\"".IndexOf(m.Value[len - 1]) >= 0) len--;
+                while (len > 0 && ".,;:!?'\"*".IndexOf(m.Value[len - 1]) >= 0) len--;
                 if (len > 0) spans.Add(new TextSpan(m.Index, len));
             }
             return spans;
