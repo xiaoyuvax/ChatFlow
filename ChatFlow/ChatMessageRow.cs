@@ -217,9 +217,7 @@ namespace ChatFlow
             lblRole.ForeColor = P != null ? P.Accent : (item.IsUser ? Color.SteelBlue : Color.SeaGreen);
             bool useMarkdown =
 #if NET8_0_OR_GREATER
-                owner.MarkdownReady && !item.Turn.Streaming && ChatMarkdown.IsMarkdown(item.Text)
-                && item.Text.Length <= ChatMarkdown.MaxChars
-                && ChatMarkdown.SplitSegments(item.Text).Count <= ChatMarkdown.MaxSegments;
+                owner.MarkdownReady && ChatMarkdown.UseMarkdown(item.Text, item.Turn.Streaming);
 #else
                 false;
 #endif
@@ -644,6 +642,9 @@ namespace ChatFlow
 #endif
             return txt.SelectedText;
         }
+
+        /// <summary>用户正在这一行里选字：重绑会清掉选区，滚动降级/恢复时得跳过它。</summary>
+        internal bool HasTextSelection => !markdownMode && txt.SelectionLength > 0;
 
         private void HookActions(Control control)
         {

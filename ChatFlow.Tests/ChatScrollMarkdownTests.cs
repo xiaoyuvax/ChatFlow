@@ -105,10 +105,181 @@ namespace ChatFlow.Tests
                 Assert.True(vbar.Visible);
                 vbar.Value = Math.Min(vbar.Maximum - vbar.LargeChange + 1, vbar.LargeChange);
 
-                Assert.All(Rows(flow), r => Assert.False(r.IsMarkdownRendered));
+                Assert.False(flow.MarkdownReady);
 
                 Pump(500);
                 Assert.Contains(Rows(flow), r => r.IsMarkdownRendered);
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        private static int TopIndex(ChatFlowControl flow)
+        {
+            var vbar = (WF.VScrollBar)Field(flow, "vbar");
+            var items = (IList)Field(flow, "items");
+            int[] sums = (int[])Field(flow, "prefixSum");
+            int y = vbar.Visible ? vbar.Value : 0;
+            int lo = 0, hi = items.Count;
+            while (lo < hi)
+            {
+                int mid = (lo + hi) / 2;
+                if (sums[mid + 1] > y) hi = mid; else lo = mid + 1;
+            }
+            return Math.Min(lo, Math.Max(0, items.Count - 1));
+        }
+
+        /// <summary>视口顶部落在哪个条目、以及在该条目内部偏了多少像素。</summary>
+        private static (int Index, int Offset) Anchor(ChatFlowControl flow)
+        {
+            var vbar = (WF.VScrollBar)Field(flow, "vbar");
+            int[] sums = (int[])Field(flow, "prefixSum");
+            int y = vbar.Visible ? vbar.Value : 0;
+            int index = TopIndex(flow);
+            return (index, y - sums[Math.Min(index, sums.Length - 1)]);
+        }
+
+        /// <summary>
+        /// 滚动停稳后补 markdown 时不能把滚动位置弹走：高度只能在实测值上更新，
+        /// 不能整份作废回到估算值（那会让视口顶部的条目整体错位，用户眼前的正文被顶走）。
+        /// 样本里放一条超长纯文本回复：它的估算高度和实测差得最多，正好能暴露这种回退。
+        /// </summary>
+        [StaFact]
+        public void MarkdownUpgrade_KeepsViewportAnchor()
+        {
+            using var flow = new ChatFlowControl { Size = new System.Drawing.Size(800, 500) };
+            using var host = new WF.Form { Size = new System.Drawing.Size(840, 560) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var book = LongBook(3);
+                for (int i = 0; i < 8; i++)
+                    book.AddTurn(new ChatTurn
+                    {
+                        User = new ChatMessage("user", "长问 " + i),
+                        Assistant = new ChatMessage("assistant", string.Concat(Enumerable.Repeat(
+                            "这是一段很长的正文，用来把这一行撑得很高；估算高度和真实渲染差得最多。\n", 60)))
+                    });
+                foreach (var turn in LongBook(4).Turns) book.AddTurn(turn);
+                flow.Bind(book);
+                Pump(500);
+
+                var vbar = (WF.VScrollBar)Field(flow, "vbar");
+                Assert.True(vbar.Visible);
+                // 一路滚到底：途中每一条长回复都会被真实渲染并记下实测高度
+                for (int i = 0; i < 200 && vbar.Value < vbar.Maximum - vbar.LargeChange; i++)
+                {
+                    vbar.Value = Math.Min(vbar.Maximum - vbar.LargeChange + 1, vbar.Value + vbar.LargeChange);
+                    WF.Application.DoEvents();
+                    Pump(20);
+                }
+                Pump(400);
+                // 再往回滚两屏（用户回去挑正文），停下后标记会补回来
+                vbar.Value = Math.Max(0, vbar.Value - vbar.LargeChange * 2);
+                Pump(50);
+                var before = Anchor(flow);
+
+                Pump(600);                              // 停稳：markdown 补回来
+                Assert.True(flow.MarkdownReady);
+                var after = Anchor(flow);
+                Assert.Equal(before.Index, after.Index);
+                // 视口顶部的像素位置必须留在同一条目里的同一处（允许少许变化：顶部那一行自己会变高）
+                Assert.InRange(after.Offset, Math.Max(0, before.Offset - 60), before.Offset + 60);
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        /// <summary>拖动/滚轮滚动时位置只能单调变化：行高从估算变实测不能让视口往回弹。</summary>
+        [StaFact]
+        public void Scrolling_DoesNotBounceBack()
+        {
+            using var flow = new ChatFlowControl { Size = new System.Drawing.Size(800, 500) };
+            using var host = new WF.Form { Size = new System.Drawing.Size(840, 560) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var book = new ChatTurnBook();
+                for (int i = 0; i < 6; i++)
+                {
+                    book.AddTurn(new ChatTurn
+                    {
+                        User = new ChatMessage("user", "问 " + i),
+                        Assistant = new ChatMessage("assistant", $"## 答 {i}\n\n- 一\n- 二")
+                    });
+                    book.AddTurn(new ChatTurn
+                    {
+                        User = new ChatMessage("user", "长问 " + i),
+                        Assistant = new ChatMessage("assistant", string.Concat(Enumerable.Repeat(
+                            "很长的正文段落，用来把这一行撑高；估算和实测差得最多的地方就在这里。\n", 40)))
+                    });
+                }
+                flow.Bind(book);
+                Pump(500);
+
+                var vbar = (WF.VScrollBar)Field(flow, "vbar");
+                Assert.True(vbar.Visible);
+                int step = Math.Max(20, vbar.LargeChange / 2);
+                int prev = vbar.Value;
+                for (int i = 0; i < 120; i++)
+                {
+                    int before = vbar.Value;
+                    int target = Math.Min(vbar.Maximum - vbar.LargeChange + 1, before + step);
+                    if (target <= before) break;
+                    vbar.Value = target;
+                    WF.Application.DoEvents();
+                    Pump(10);
+                    Assert.True(vbar.Value >= before, $"向下滚动回弹：{before} → {vbar.Value}（第 {i} 步）");
+                    prev = vbar.Value;
+                }
+
+                for (int i = 0; i < 120; i++)
+                {
+                    int before = vbar.Value;
+                    int target = Math.Max(0, before - step);
+                    if (target >= before) break;
+                    vbar.Value = target;
+                    WF.Application.DoEvents();
+                    Pump(10);
+                    Assert.True(vbar.Value <= before, $"向上滚动回弹：{before} → {vbar.Value}（第 {i} 步）");
+                }
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        /// <summary>用户选好正文再轻滚一下，选区不能被行回收/重绑清掉（否则复制不了）。</summary>
+        [StaFact]
+        public void SelectingText_SurvivesSmallScroll()
+        {
+            using var flow = new ChatFlowControl { Size = new System.Drawing.Size(800, 500) };
+            using var host = new WF.Form { Size = new System.Drawing.Size(840, 560) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                flow.Bind(LongBook(12));
+                Pump(400);
+
+                var row = Rows(flow).First(r => !r.IsMarkdownRendered && r.Item?.IsUser == true);
+                row.BodyBox.SelectionStart = 0;
+                row.BodyBox.SelectionLength = 4;
+                Assert.True(row.HasTextSelection);
+
+                var vbar = (WF.VScrollBar)Field(flow, "vbar");
+                vbar.Value = Math.Max(0, vbar.Value - 20);
+                Pump(500);
+
+                Assert.True(row.HasTextSelection, "轻滚后选区被清掉了");
+                Assert.Equal(4, row.GetSelectedText().Length);
             }
             finally
             {

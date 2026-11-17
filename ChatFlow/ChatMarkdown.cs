@@ -44,6 +44,13 @@ namespace ChatFlow
         /// </summary>
         public const int MaxChars = 1500;
 
+        /// <summary>这一段正文该走 markdown 渲染还是带样式的纯文本（流式中/过长/段太多都退回纯文本）。</summary>
+        public static bool UseMarkdown(string text, bool streaming)
+        {
+            if (streaming || string.IsNullOrEmpty(text) || text.Length > MaxChars) return false;
+            return IsMarkdown(text) && SplitSegments(text).Count <= MaxSegments;
+        }
+
         /// <summary>把 markdown 文本切成「散文段 / 围栏代码段」：散文交 MarkdownTextBox，代码段交 FCTB 按语言渲染。
         /// 围栏行本身不进入任何段（只作分隔）；未闭合围栏的剩余部分按代码处理（流式半截安全）。</summary>
         public static List<(bool IsCode, string Content, string Lang)> SplitSegments(string text)
