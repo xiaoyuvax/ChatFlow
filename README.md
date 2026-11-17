@@ -25,7 +25,7 @@
 ## 环境要求
 
 - `net7.0-windows7.0` ~ `net10.0-windows7.0`，WinForms
-- 依赖 [Vax-FCTB](https://www.nuget.org/packages/Vax-FCTB) `2.19.0.231`（FastColoredTextBox）
+- 依赖 [Vax-FCTB](https://www.nuget.org/packages/Vax-FCTB) `2.19.0.232`（FastColoredTextBox）
 - 依赖 [CDS.Markdown.Lite](https://www.nuget.org/packages/CDS.Markdown.Lite) `1.5.7`（`net8.0`+；`net7.0` 目标不引用，正文保持 FCTB 渲染）
 
 ## 快速开始
