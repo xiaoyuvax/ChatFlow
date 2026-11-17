@@ -175,5 +175,124 @@ namespace ChatFlow.Tests
                 host.Hide();
             }
         }
+        [StaFact]
+        public void FullRebuild_InsideSplitLongBody_DoesNotJumpToBodyStart()
+        {
+            using var flow = new ChatFlowControl
+            {
+                Size = new System.Drawing.Size(900, 600),
+                ChatFont = new System.Drawing.Font("Microsoft YaHei UI", 9F)
+            };
+            using var host = new WF.Form { Size = new System.Drawing.Size(940, 660) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                // 超过 MaxItemChars（1 万字）的正文会被切成多个分片；片段之间共用同一个 Turn，
+                // 只按 (Turn, IsUser) 还原就会落到第一片上，视口被拽回正文开头。
+                var book = new ChatTurnBook();
+                book.AddTurn(new ChatTurn
+                {
+                    User = new ChatMessage("user", "长回答"),
+                    Assistant = new ChatMessage("assistant", LongBody())
+                });
+                flow.Bind(book);
+                Pump(600);
+
+                var vbar = (WF.VScrollBar)Field(flow, "vbar");
+                Assert.True(vbar.Visible);
+                vbar.Value = (vbar.Maximum - vbar.LargeChange + 1) / 2;
+                Pump(400);
+
+                var before = TopRow(flow);
+                Assert.NotNull(before);
+                Assert.True(before.Item.IsContinuation, "测试前提：视口应停在长正文的后续分片上");
+
+                book.RaiseChanged();   // 宿主整表刷新（结构变化）
+                Pump(400);
+
+                var after = TopRow(flow);
+                Assert.NotNull(after);
+                Assert.True(after.Item.IsContinuation, "整表刷新后视口被弹回正文开头");
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        /// <summary>
+        /// 只是拖动滚动条（没有任何刷新）：行高从估算变实测、markdown 降级/回升都会改前缀和，
+        /// 视口必须跟着走，不能每到某一行就弹回前面。
+        /// </summary>
+        [StaFact]
+        public void DraggingScrollbar_LongBody_DoesNotJumpBack()
+        {
+            using var flow = new ChatFlowControl
+            {
+                Size = new System.Drawing.Size(900, 600),
+                ChatFont = new System.Drawing.Font("Microsoft YaHei UI", 9F)
+            };
+            using var host = new WF.Form { Size = new System.Drawing.Size(940, 660) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var book = new ChatTurnBook();
+                for (int i = 0; i < 4; i++)
+                    book.AddTurn(new ChatTurn
+                    {
+                        User = new ChatMessage("user", "问题 " + i),
+                        Assistant = new ChatMessage("assistant", Body(6))
+                    });
+                book.AddTurn(new ChatTurn
+                {
+                    User = new ChatMessage("user", "长回答"),
+                    Assistant = new ChatMessage("assistant", LongBody())
+                });
+                flow.Bind(book);
+                Pump(600);
+
+                var vbar = (WF.VScrollBar)Field(flow, "vbar");
+                Assert.True(vbar.Visible);
+
+                int floor = 0;
+                for (int i = 0; i <= 24; i++)
+                {
+                    // 真实拖动时滚动条会被系统钳到当前范围：范围随高度变化，这里每步重取
+                    int max = Math.Max(0, vbar.Maximum - vbar.LargeChange + 1);
+                    vbar.Value = Math.Max(0, Math.Min(max, max * i / 24));
+                    Pump(80);   // 比 markdown 回升还短：模拟连续拖动
+                    int top = TopItemIndex(flow);
+                    if (top < 0) continue;
+                    // 允许 ±1（相邻行高度变化会让边界条目换一个），再大就是「弹回」
+                    Assert.True(top >= floor - 1,
+                        $"拖到 {i}/24 时视口弹回：top={top}，之前最高到 {floor}");
+                    floor = Math.Max(floor, top);
+                }
+                Assert.True(floor > 6, $"没能滚进长正文里就没测到：floor={floor}");
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        private static int TopItemIndex(ChatFlowControl flow)
+        {
+            var items = (IList)Field(flow, "items");
+            var row = TopRow(flow);
+            return row?.Item == null ? -1 : items.IndexOf(row.Item);
+        }
+
+        private static string LongBody()
+            => string.Concat(Enumerable.Range(0, 1200)
+                .Select(i => $"这是第 {i:0000} 行正文，用来把长度顶过一万字。\n"));
+
+        private static ChatMessageRow TopRow(ChatFlowControl flow)
+            => ((IDictionary)Field(flow, "realized")).Values.Cast<ChatMessageRow>()
+                .Where(r => r.Visible && r.Top <= 1 && r.Top + r.Height > 1)
+                .OrderByDescending(r => r.Top)
+                .FirstOrDefault();
     }
 }

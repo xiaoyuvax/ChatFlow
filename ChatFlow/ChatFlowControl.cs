@@ -536,29 +536,53 @@ namespace ChatFlow
             if (autoScrollToEnd) ScrollToEnd();
         }
 
-        /// <summary>视口顶部所在的轮与条目内比例：重建后条目高度会变，只能按比例还原。</summary>
-        private (ChatTurn Turn, bool User, double Ratio)? CaptureTurnAnchor()
+        /// <summary>视口顶部所在的轮，以及在整个轮里的比例。
+        /// 必须按整轮算：长回答会被切成多个分片，只按单片算比例、还原时又会落到第一片上，
+        /// 视口就被拽回这一轮的开头（用户侧表现：滚到正文中间就弹回正文开始处）。</summary>
+        private (ChatTurn Turn, double Ratio)? CaptureTurnAnchor()
         {
             if (!vbar.Visible || items.Count == 0 || prefixSum.Length < items.Count + 1) return null;
             int idx = Math.Min(FindFirstIndexAt(vbar.Value), items.Count - 1);
             if (idx < 0) return null;
-            int height = Math.Max(1, prefixSum[idx + 1] - prefixSum[idx]);
-            double ratio = Math.Clamp((vbar.Value - prefixSum[idx]) / (double)height, 0, 1);
-            return (items[idx].Turn, items[idx].IsUser, ratio);
+            var turn = items[idx].Turn;
+            if (turn == null) return null;
+
+            int start = TurnBlockStart(idx);
+            int end = TurnBlockEnd(idx);
+            int height = Math.Max(1, prefixSum[end + 1] - prefixSum[start]);
+            double ratio = Math.Clamp((vbar.Value - prefixSum[start]) / (double)height, 0, 1);
+            return (turn, ratio);
         }
 
-        private void RestoreTurnAnchor((ChatTurn Turn, bool User, double Ratio) anchor)
+        private void RestoreTurnAnchor((ChatTurn Turn, double Ratio) anchor)
         {
-            int idx = items.FindIndex(i => i.Turn == anchor.Turn && i.IsUser == anchor.User);
-            if (idx < 0) idx = items.FindIndex(i => i.Turn == anchor.Turn);
+            int idx = items.FindIndex(i => ReferenceEquals(i.Turn, anchor.Turn));
             if (idx < 0)
             {
                 Relayout();
                 return;
             }
-            int height = Math.Max(1, prefixSum[idx + 1] - prefixSum[idx]);
-            SetScrollValueInternal(Math.Min(MaxScrollValue, prefixSum[idx] + (int)Math.Round(height * anchor.Ratio)));
+            int start = TurnBlockStart(idx);
+            int end = TurnBlockEnd(start);
+            int height = Math.Max(1, prefixSum[end + 1] - prefixSum[start]);
+            SetScrollValueInternal(Math.Min(MaxScrollValue,
+                prefixSum[start] + (int)Math.Round(height * anchor.Ratio)));
             Relayout();
+        }
+
+        /// <summary>同一轮的条目是连续的（用户行 / 正文各分片 / 卡片 / 链接），取整段的范围。</summary>
+        private int TurnBlockStart(int idx)
+        {
+            var turn = items[idx].Turn;
+            while (idx > 0 && ReferenceEquals(items[idx - 1].Turn, turn)) idx--;
+            return idx;
+        }
+
+        private int TurnBlockEnd(int idx)
+        {
+            var turn = items[idx].Turn;
+            while (idx + 1 < items.Count && ReferenceEquals(items[idx + 1].Turn, turn)) idx++;
+            return idx;
         }
 
         #endregion 数据绑定
