@@ -327,11 +327,12 @@ namespace ChatFlow.Tests
             host.Show();
             try
             {
+                var longText = string.Concat(Enumerable.Range(0, 3).Select(Markdown));
+                longText += new string('文', Math.Max(1, ChatMarkdown.MaxChars + 1 - longText.Length));
                 var turn = new ChatTurn
                 {
                     User = new ChatMessage("user", "问题"),
-                    Assistant = new ChatMessage("assistant",
-                        string.Concat(Enumerable.Range(0, 3).Select(Markdown)))
+                    Assistant = new ChatMessage("assistant", longText)
                 };
                 row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.Assistant), font, 600);
                 Assert.False(row.IsMarkdownRendered);

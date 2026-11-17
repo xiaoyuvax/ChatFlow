@@ -41,8 +41,10 @@ namespace ChatFlow
         /// 超过这个长度的正文不再走 markdown：SetMarkdown 实测 0.38ms/字且随长度超线性
         /// （2 千字 0.8 秒、6 千字 6.5 秒、1.2 万字 21 秒），纯文本 FCTB + 正则样式 1.2 万字只要 8ms。
         /// 长回复按带样式的纯文本渲染（代码块仍会着色/可折叠），短回复才用 markdown。
+        /// 阈值定在 3000：1500 会让大多数完整回复都退回 FCTB（markdown 视觉丢失），再往上则渲染耗时开始明显拖慢首绘。
+        /// 宿主可经 <see cref="ChatFlowControl.MarkdownMaxChars"/> 覆盖。
         /// </summary>
-        public const int MaxChars = 1500;
+        internal static int MaxChars { get; set; } = 3000;
 
         /// <summary>这一段正文该走 markdown 渲染还是带样式的纯文本（流式中/过长/段太多都退回纯文本）。</summary>
         public static bool UseMarkdown(string text, bool streaming)

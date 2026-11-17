@@ -41,6 +41,13 @@ namespace ChatFlow
         private int[] prefixSum = [];
         private readonly Dictionary<ChatFlowItem, int> itemIndex = [];
 
+        /// <summary>正文走 markdown 渲染的字符上限（默认 3000，超过改用带样式的纯文本）；宿主按设置覆盖，非正数回落默认。</summary>
+        public static int MarkdownMaxChars
+        {
+            get => ChatMarkdown.MaxChars;
+            set => ChatMarkdown.MaxChars = value > 0 ? value : 3000;
+        }
+
         /// <summary>选中回话数量变化时触发（用于外部刷新命令可用状态等）。</summary>
         public event EventHandler SelectionChanged;
 
@@ -524,10 +531,9 @@ namespace ChatFlow
                 foreach (var link in links.Where(l => l.AnchorTurnIndex < 0 || l.AnchorTurnIndex >= index))
                     items.Add(new ChatFlowItem(DataSource.Turns.LastOrDefault(), ChatFlowItemKind.Link) { Link = link });
 
-                // 执行进行中且正文还没出字：末尾显示「工作中…」指示行；正文一开始流式就撤掉（文字本身即进度提示）
+                // 执行进行中：末尾常驻「工作中…」指示行（正文已出字也保留，后台等待时用户仍能看到状态）；执行结束移除
                 var streamingTurn = DataSource.Turns.LastOrDefault();
-                if (streamingTurn?.Streaming == true
-                    && new ChatFlowItem(streamingTurn, ChatFlowItemKind.Assistant).Text.Length == 0)
+                if (streamingTurn?.Streaming == true)
                     items.Add(new ChatFlowItem(streamingTurn, ChatFlowItemKind.Thinking));
             }
 
@@ -1220,9 +1226,10 @@ namespace ChatFlow
                 if (item == null) return;
             }
 
-            // 「工作中…」指示行只在还没出字时存在：一旦出字或这一轮结束，就地重绑删不掉它，得整表重建
-            if (items.Any(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Thinking)
-                && (!turn.Streaming || new ChatFlowItem(turn, ChatFlowItemKind.Assistant).Text.Length > 0))
+            // 「工作中…」指示行与当前最后一轮的流式状态保持一致：流式期间常驻末尾，执行结束才整表重建把它删掉
+            bool indicatorPresent = items.Any(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Thinking);
+            bool indicatorExpected = turn.Streaming && ReferenceEquals(turn, DataSource?.Turns.LastOrDefault());
+            if (indicatorPresent != indicatorExpected)
             {
                 RebuildItems();
                 return;
@@ -1249,7 +1256,8 @@ namespace ChatFlow
             if (autoScrollToEnd)
             {
                 ScrollToEnd();
-                var last = items.LastOrDefault(i => !i.IsUser);
+                // 末尾指示行不是正文行：取最后一条正文分片来落光标
+                var last = items.LastOrDefault(i => i.Kind == ChatFlowItemKind.Assistant);
                 if (last != null && realized.TryGetValue(last, out var r2))
                     r2.PlaceCaretEnd();
             }
@@ -1268,7 +1276,8 @@ namespace ChatFlow
             // 先按当前缓存滚动到底（近似定位，行可能因校正变高）
             ScrollToEnd();
             // 实例化末尾条目并校正高度后可能超出视口，再滚一次并置光标
-            var lastItem = items[^1];
+            // 末尾可能是「工作中…」指示行（非正文），光标要落在最后一条正文分片上
+            var lastItem = items.LastOrDefault(i => i.Kind == ChatFlowItemKind.Assistant) ?? items[^1];
             Relayout();
             if (realized.TryGetValue(lastItem, out var row))
             {

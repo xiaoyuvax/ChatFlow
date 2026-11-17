@@ -7,7 +7,8 @@ using WF = System.Windows.Forms;
 namespace ChatFlow.Tests
 {
     /// <summary>
-    /// 末尾「工作中…」指示行：正文还没出字时占位（不额外显示空白正文框），一开始流式正文就撤掉，执行结束也移除。
+    /// 末尾「工作中…」指示行：执行期间常驻（正文已出字时显示在正文下方，后台等待也能看到状态），
+    /// 正文没出字时不额外显示空白正文框，执行结束移除。
     /// </summary>
     [Collection("ThemeState")]
     public class ChatThinkingIndicatorTests
@@ -28,7 +29,7 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
-        public void StreamingTurn_BodyTextArrived_RemovesThinkingIndicator()
+        public void StreamingTurn_BodyTextArrived_KeepsThinkingIndicatorBelowBody()
         {
             var book = new ChatTurnBook();
             var turn = NewStreamingTurn();
@@ -40,8 +41,8 @@ namespace ChatFlow.Tests
             book.RaiseChanged();
 
             var items = Items(flow);
-            Assert.DoesNotContain(items, item => item.Kind == ChatFlowItemKind.Thinking);
-            Assert.Equal(ChatFlowItemKind.Assistant, items[^1].Kind);
+            Assert.Equal(ChatFlowItemKind.Assistant, items[^2].Kind);
+            Assert.Equal(ChatFlowItemKind.Thinking, items[^1].Kind);
         }
 
         [StaFact]
@@ -137,9 +138,9 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
-        public void StreamingTurn_BodyArrivesViaStreamingUpdate_RemovesThinkingIndicator()
+        public void StreamingTurn_BodyArrivesViaStreamingUpdate_KeepsThinkingIndicator()
         {
-            // 现场：先有思考区（助手行已实例化），正文随后流式到达；此时走就地重绑，指示行也得撤掉
+            // 现场：先有思考区（助手行已实例化），正文随后流式到达；此时走就地重绑，指示行仍要留在正文下方
             using var flow = new ChatFlowControl { Size = new Size(600, 400) };
             using var host = new WF.Form();
             host.Controls.Add(flow);
@@ -157,9 +158,16 @@ namespace ChatFlow.Tests
                 turn.AssistantText = "先说结论：";
                 flow.UpdateStreamingMessage(turn, "先说结论：");
 
-                Assert.DoesNotContain(Items(flow), item => item.Kind == ChatFlowItemKind.Thinking);
+                var items = Items(flow);
+                Assert.Contains(items, item => item.Kind == ChatFlowItemKind.Assistant);
+                Assert.Equal(ChatFlowItemKind.Thinking, items[^1].Kind);
                 Application.DoEvents();
-                Assert.Equal(0, ThinkingRowCount(flow));
+                Assert.Equal(1, ThinkingRowCount(flow));
+
+                var body = RealizedRows(flow).Values.First(r => r.Item?.Kind == ChatFlowItemKind.Assistant);
+                var indicator = ThinkingRow(flow);
+                Assert.True(indicator.Top >= body.Bottom,
+                    $"指示行应显示在正文下方（正文底 {body.Bottom}，指示行顶 {indicator.Top}）");
             }
             finally
             {
@@ -209,6 +217,9 @@ namespace ChatFlow.Tests
 
         private static int ThinkingRowCount(ChatFlowControl flow)
             => ((IDictionary)Field(flow, "thinkingRows")).Count;
+
+        private static Dictionary<ChatFlowItem, ChatMessageRow> RealizedRows(ChatFlowControl flow)
+            => (Dictionary<ChatFlowItem, ChatMessageRow>)Field(flow, "realized");
 
         private static Control ThinkingRow(ChatFlowControl flow)
             => ((IDictionary)Field(flow, "thinkingRows")).Values.Cast<Control>().FirstOrDefault();

@@ -3,7 +3,7 @@ using System.Drawing.Drawing2D;
 namespace ChatFlow
 {
     /// <summary>
-    /// 聊天末尾的「思考中…」指示行：旋转弧线 + 文案，执行期间常驻在最后一条消息之后。
+    /// 聊天末尾的「工作中…」指示行：旋转弧线 + 文案，执行期间常驻在最后一条消息之后。
     /// 动画由独立 Timer 驱动，只重绘本行，不触发整表重排，避免流式输出时卡顿。
     /// </summary>
     internal sealed class ChatThinkingRow : Control
