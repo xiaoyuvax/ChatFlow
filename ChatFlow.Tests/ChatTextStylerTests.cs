@@ -436,6 +436,46 @@ namespace ChatFlow.Tests
         }
 
         [Fact]
+        public void CollectLinks_Url_TruncatedInToolLine_NotLinkified()
+        {
+            // 工具行把过长参数截成「前缀…」，半截地址点开必然失败，不能再标成链接
+            var links = ChatTextStyler.CollectLinks(
+                " >> Shell[command=zcurl GET http://127.0.0.1:9191/agent/get?name=ImageFileManFor…] · 1.1s");
+            Assert.Empty(links);
+        }
+
+        [Fact]
+        public void CollectLinks_Url_ToolLineClosingBracketNotPartOfUrl()
+        {
+            // 工具行的 [参数] 收尾方括号不是 URL 的一部分，否则点开带 ] 的地址打不开
+            var link = Assert.Single(ChatTextStyler.CollectLinks(
+                " >> Shell[command=zcurl GET http://127.0.0.1:9090/agent/registry] · 5ms"));
+            Assert.Equal("http://127.0.0.1:9090/agent/registry", link.Target);
+        }
+
+        [Fact]
+        public void CollectLinks_Url_Ipv6Bracket_Kept()
+        {
+            var link = Assert.Single(ChatTextStyler.CollectLinks("本机 http://[::1]:5080/x 可看"));
+            Assert.Equal("http://[::1]:5080/x", link.Target);
+        }
+
+        [Fact]
+        public void CollectLinks_Url_GluedAfterCjk_StillDetected()
+        {
+            // 中文后不带空格直接跟网址（「见https://x」）也要能点：.NET 的 \b 在这里不成立
+            var link = Assert.Single(ChatTextStyler.CollectLinks("见https://venice.ai/doc。"));
+            Assert.Equal("https://venice.ai/doc", link.Target);
+        }
+
+        [Fact]
+        public void CollectLinks_Url_PlaceholderWithoutHost_NotLinkified()
+        {
+            // 文档/提示里的占位符（https://...）不是地址
+            Assert.Empty(ChatTextStyler.CollectLinks("见 https://... 与 https:// 说明"));
+        }
+
+        [Fact]
         public void CollectLinks_ExtensionlessToolPath_DoesNotBacktrackExponentially()
         {
             // 回归：ListDir(path=C:/Users/.../OpenLoop) 这类无扩展名长路径曾让 CollectLinks 回溯爆炸（UI 卡死数分钟）

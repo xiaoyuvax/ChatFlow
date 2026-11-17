@@ -84,8 +84,9 @@ namespace ChatFlow
         private static readonly Regex ItalicRegex = new(@"(?<!\*)\*(?<text>[^\*\n]+)\*(?!\*)", RegexOptions.Compiled);
         private static readonly Regex InlineCodeRegex = new(@"`(?<text>[^`\n]+)`", RegexOptions.Compiled);
         private static readonly Regex FenceRegex = new(@"^```.*$", RegexOptions.Compiled | RegexOptions.Multiline);
+        // 起点不能用 \b：.NET 的 \w 含 CJK，「见https://x」两侧都是词字符，\b 不成立就漏识别。
         private static readonly Regex UrlRegex = new(
-            @"\bhttps?://[^\s<>""'`{}|\\^（）()【】「」『』《》〈〉，。；：、！？…]+", RegexOptions.Compiled);
+            @"(?<![A-Za-z0-9_])https?://[^\s<>""'`{}|\\^（）()【】「」『』《》〈〉，。；：、！？…]+", RegexOptions.Compiled);
         // 本地路径：盘符（J:/、J:\）或 UNC（\\server\share）；允许路径内空格（如 "My God"），
         // 但不吞尾部空白与 CJK/全角字符（中文紧随路径时在此断开）。
         // 括号只有当「)」后面紧跟分隔符时才算路径的一部分（C:\Program Files (x86)\X）；
@@ -191,18 +192,41 @@ namespace ChatFlow
             => text.IndexOf('\r') < 0 ? text : text.Replace("\r\n", "\n");
 
         /// <summary>URL 区间：遇空白/引号/中文标点等非法 URL 字符即中断，再去掉句末标点与 markdown 包裹符
-        /// （<c>**http://x**</c> 尾部两个星号是粗体标记，不是 URL 的一部分）。</summary>
+        /// （<c>**http://x**</c> 尾部两个星号是粗体标记，不是 URL 的一部分；工具行的 <c>[参数]</c> 尾部方括号同理）。
+        /// 显示层截断出来的「前缀…」不算 URL，否则点开的是半截地址。</summary>
         internal static List<TextSpan> CollectUrlSpans(string text)
         {
             var spans = new List<TextSpan>();
             if (string.IsNullOrEmpty(text)) return spans;
-            foreach (Match m in UrlRegex.Matches(NormalizeNewlines(text)))
+            string s = NormalizeNewlines(text);
+            foreach (Match m in UrlRegex.Matches(s))
             {
-                int len = m.Length;
-                while (len > 0 && ".,;:!?'\"*".IndexOf(m.Value[len - 1]) >= 0) len--;
-                if (len > 0) spans.Add(new TextSpan(m.Index, len));
+                string value = m.Value;
+                int len = value.Length;
+                bool bracketed = value.IndexOf('[') >= 0;   // IPv6 字面量 http://[::1]，尾部 ] 属于地址
+                while (len > 0)
+                {
+                    char tail = value[len - 1];
+                    if (".,;:!?'\"*".IndexOf(tail) >= 0 || (tail == ']' && !bracketed)) { len--; continue; }
+                    break;
+                }
+                if (len == 0) continue;
+                int end = m.Index + len;
+                if (end < s.Length && s[end] == '…') continue;
+                if (IsPlaceholderUrl(value.Substring(0, len))) continue;
+                spans.Add(new TextSpan(m.Index, len));
             }
             return spans;
+        }
+
+        /// <summary>只有协议或只剩点号的伪地址（文档里的 <c>https://...</c> 占位符）：点开必然失败，不标链接。</summary>
+        private static bool IsPlaceholderUrl(string url)
+        {
+            int sep = url.IndexOf("://", StringComparison.Ordinal);
+            if (sep < 0) return false;
+            for (int i = sep + 3; i < url.Length; i++)
+                if (url[i] != '.') return false;
+            return true;
         }
 
         /// <summary>工具行里要染色的位置：工具名、左方括号、行尾右方括号。`&gt;&gt;` 前缀、参数与耗时保持正文色。</summary>
