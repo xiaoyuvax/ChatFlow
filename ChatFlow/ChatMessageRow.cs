@@ -217,7 +217,8 @@ namespace ChatFlow
             lblRole.ForeColor = P != null ? P.Accent : (item.IsUser ? Color.SteelBlue : Color.SeaGreen);
             bool useMarkdown =
 #if NET8_0_OR_GREATER
-                !item.Turn.Streaming && ChatMarkdown.IsMarkdown(item.Text)
+                owner.MarkdownReady && !item.Turn.Streaming && ChatMarkdown.IsMarkdown(item.Text)
+                && item.Text.Length <= ChatMarkdown.MaxChars
                 && ChatMarkdown.SplitSegments(item.Text).Count <= ChatMarkdown.MaxSegments;
 #else
                 false;
@@ -243,6 +244,9 @@ namespace ChatFlow
             }
             _bodyKey = bodyKey;
             ShowMarkdown(useMarkdown);
+            // 每次绑到 markdown 都补一次重测：池化行复用时上一行的排版状态不算数，
+            // 而 SetMarkdown 的换行往往晚于本次测量，行高停在偏小值就会把末尾正文裁掉。
+            if (useMarkdown) owner.RequestRelayoutDeferred(this);
             bodyShown = !string.IsNullOrEmpty(item.Text);
             chk.Checked = item.Turn.Selected;
             // 勾选按整轮生效、由第一片代表：续片不单独出勾选框，免得只取消其中一段
@@ -417,6 +421,8 @@ namespace ChatFlow
                 BackColor = owner.BackColor,
             };
             prose.MouseWheelForwarded += (delta, ctrl) => owner.ForwardWheel(delta, ctrl);
+            // 渲染完内容尺寸还会变（换行/图片），届时补一次重测：行高与滚动范围跟着走
+            prose.ContentsResized += (_, _) => owner.RequestRelayoutDeferred(this);
             // markdown 散文块是独立控件，行级 LinkClicked 不会自己传上来（FCTB 分支靠 txt 的订阅）
             prose.LinkClicked += (kind, target) => LinkClicked?.Invoke(Item, kind, target);
             prose.MouseUp += (_, e) =>
@@ -560,8 +566,9 @@ namespace ChatFlow
             if (!markdownMode) txt.PlaceCaretEnd();
         }
 
-        /// <summary>在当前宽度/字体下重测本行高度（含角色栏与留白）。</summary>
-        public int Remeasure()
+        /// <summary>在当前宽度/字体下重测本行高度（含角色栏与留白）。
+        /// recalcCode=false 用于刚 Bind 完的补测：代码块那时已经重算过，再算一遍只是白烧时间。</summary>
+        public int Remeasure(bool recalcCode = true)
         {
             if (!markdownMode)
             {
@@ -569,7 +576,7 @@ namespace ChatFlow
                 txt.NeedRecalc(true, true);
             }
 #if NET8_0_OR_GREATER
-            else
+            else if (recalcCode)
             {
                 // 折叠/展开只改了行的可见状态，TextHeight 要等 FCTB 重算；不重算会量到旧高度
                 foreach (var block in _blocks)

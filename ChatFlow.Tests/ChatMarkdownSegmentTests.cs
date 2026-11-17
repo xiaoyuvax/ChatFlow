@@ -241,5 +241,53 @@ namespace ChatFlow.Tests
                 host.Dispose();
             }
         }
+
+        /// <summary>流式期间是纯文本，收尾才转 markdown：渲染后行高会变高，滚动范围必须跟着更新，
+        /// 否则拖到底仍有末尾正文被裁（用户实测的底部截断）。</summary>
+        [StaFact]
+        public void StreamingThenMarkdown_KeepsBottomReachable()
+        {
+            using var flow = new ChatFlowControl();
+            using var host = new Form { Size = new Size(900, 600) };
+            host.Controls.Add(flow);
+            flow.Dock = DockStyle.Fill;
+            host.Show();
+            try
+            {
+                string body = string.Join("\n\n", Enumerable.Range(0, 14)
+                    .Select(i => $"## 第 {i} 段\n- 列表项 " + new string('长', 20)));
+
+                var book = new ChatTurnBook();
+                var turn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "问题"),
+                    Assistant = new ChatMessage("assistant", ""),
+                    Streaming = true
+                };
+                book.AddTurn(turn);
+                flow.Bind(book);
+                Application.DoEvents();
+
+                // 收尾：正文转 markdown，整表重建后按新渲染量高度
+                turn.AssistantText = body;
+                turn.Streaming = false;
+                book.RaiseChanged();
+                Application.DoEvents();
+
+                string diag = flow.GetLayoutDiagnostics();
+                Assert.True(flow.AtEnd, diag);
+                var last = RealizedRows(flow).Where(r => r.Item is { IsUser: false })
+                    .OrderByDescending(r => r.Top).FirstOrDefault();
+                Assert.NotNull(last);
+                Assert.True(last.IsMarkdownRendered, diag);
+                Assert.True(last.MarkdownBox.Top + last.MarkdownBox.Height <= last.Height + 2,
+                    $"正文被裁：top={last.MarkdownBox.Top} h={last.MarkdownBox.Height} rowH={last.Height}; {diag}");
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
     }
 }

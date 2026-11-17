@@ -20,6 +20,10 @@ namespace ChatFlow
         private readonly Dictionary<ChatFlowItem, ChatThinkingRow> thinkingRows = [];
         private string expandedSurveyId;
         private readonly Dictionary<ChatFlowItem, int> heightCache = [];
+
+        /// <summary>已经用真实渲染量过高度的条目：校准时只重测估算出来的行。</summary>
+        private readonly HashSet<ChatFlowItem> measuredItems = [];
+
         private readonly List<ChatMessageRow> rowPool = [];
         private readonly VScrollBar vbar = new();
         /// <summary>底部居中的「跳到末尾」浮动按钮（不在末尾时显示）。</summary>
@@ -108,7 +112,7 @@ namespace ChatFlow
         {
             surveys.Clear();
             if (value != null) surveys.AddRange(value);
-            if (heightCache.Count > 0) heightCache.Clear();
+            if (heightCache.Count > 0) ClearHeights();
             RebuildItems();
         }
 
@@ -145,7 +149,7 @@ namespace ChatFlow
         private void OnCardToggled(ChatSurvey survey, bool expanded)
         {
             expandedSurveyId = expanded ? survey.Id : null;
-            if (cardRows.Count > 0) { heightCache.Clear(); RequestRelayoutOfCards(); }
+            if (cardRows.Count > 0) { ClearHeights(); RequestRelayoutOfCards(); }
             SurveyToggled?.Invoke(this, new ChatSurveyToggledEventArgs(survey, expanded));
         }
 
@@ -187,7 +191,7 @@ namespace ChatFlow
                 if (chatFont != null && !ReferenceEquals(chatFont, value))
                     chatFont.Dispose();
                 chatFont = (Font)value.Clone();
-                heightCache.Clear();
+                ClearHeights();
                 foreach (var row in realized.Values.ToArray())
                     ReleaseRow(row);
                 UpdateScrollAndLayout();
@@ -230,6 +234,14 @@ namespace ChatFlow
             stickyThinking.Click += (_, _) => CollapseStickyThinking();
             Controls.Add(stickyThinking);
 
+            markdownDelay.Tick += (_, _) =>
+            {
+                markdownDelay.Stop();
+                if (MarkdownReady || IsDisposed) return;
+                MarkdownReady = true;
+                UpgradeMarkdownRows();
+            };
+
             ChatTheme.Changed += OnAppThemeChanged;
         }
 
@@ -255,7 +267,11 @@ namespace ChatFlow
         private void vbar_ValueChanged(object sender, EventArgs e)
         {
             if (updatingBar) return;   // UpdateScrollbar 内部改范围触发的回调：不重排、不改跟随状态
-            if (!settingScrollInternally) autoScrollToEnd = IsAtEnd;
+            if (!settingScrollInternally)
+            {
+                autoScrollToEnd = IsAtEnd;
+                PauseMarkdown();   // 用户正在翻历史：先按纯文本排，停稳后再补 markdown
+            }
             Relayout();
             UpdateJumpToEndButton();
         }
@@ -370,6 +386,7 @@ namespace ChatFlow
         protected override void Dispose(bool disposing)
         {
             if (disposing) ChatTheme.Changed -= OnAppThemeChanged;
+            if (disposing) markdownDelay.Dispose();
             base.Dispose(disposing);
         }
 
@@ -426,7 +443,7 @@ namespace ChatFlow
         private void RebuildItems()
         {
             items.Clear();
-            heightCache.Clear();
+            ClearHeights();
             if (DataSource != null)
             {
                 int index = 0;
@@ -584,6 +601,45 @@ namespace ChatFlow
             return h;
         }
 
+        /// <summary>高度缓存失效（宽度/字体/结构/主题变化）：估算值与实测量一起作废。</summary>
+        private void ClearHeights()
+        {
+            heightCache.Clear();
+            measuredItems.Clear();
+        }
+
+        // markdown 块渲染极慢（CDS.Markdown 实测约 0.3ms/字符，一段 400 字要 130ms），
+        // 快速拖动时每进入视口一行就卡一次。所以滚动期间按纯文本渲染（FCTB 只要几毫秒），
+        // 停稳 180ms 后再把可见行补成 markdown。
+        private readonly System.Windows.Forms.Timer markdownDelay = new() { Interval = 180 };
+
+        /// <summary>现在是否允许把行渲成 markdown（滚动停稳后才允许）。</summary>
+        internal bool MarkdownReady { get; private set; } = true;
+
+        private void PauseMarkdown()
+        {
+            MarkdownReady = false;
+            markdownDelay.Stop();
+            markdownDelay.Start();
+        }
+
+        private void UpgradeMarkdownRows()
+        {
+            if (IsDisposed || items.Count == 0) return;
+            // markdown 行比纯文本高得多：换回 markdown 前记住视口顶部是哪个条目、偏移多少，
+            // 排完再按同样的锚点定位，否则用户眼前的正文会突然被顶走。
+            int viewTop = vbar.Visible ? vbar.Value : 0;
+            int anchor = FindFirstIndexAt(viewTop);
+            int offset = viewTop - prefixSum[Math.Min(anchor, items.Count)];
+            foreach (var row in realized.Values.ToArray()) ReleaseRow(row);
+            ClearHeights();
+            RebuildSums();
+            UpdateScrollbar();
+            if (!autoScrollToEnd)
+                SetScrollValueInternal(prefixSum[Math.Min(anchor, items.Count)] + offset);
+            Relayout();
+        }
+
         private void UpdateScrollAndLayout()
         {
             int count = items.Count;
@@ -661,17 +717,42 @@ namespace ChatFlow
             UpdateStickyThinking();    // 折叠头被滚出可见区时，在顶部顶替它
         }
 
+        /// <summary>行内 markdown 渲染完成（RichTextBox 内容尺寸变化）后补一次重测：
+        /// Bind 当刻量到的高度可能还没算进渲染后的换行/图片，滚动范围会短一截，
+        /// 表现为拖到底仍有正文被裁。合并成一次，且高度没变就不重排。</summary>
+        internal void RequestRelayoutDeferred(ChatMessageRow row)
+        {
+            if (row?.Item == null || !IsHandleCreated || !relayoutPending.Add(row)) return;
+            BeginInvoke(new Action(() =>
+            {
+                relayoutPending.Remove(row);
+                var item = row.Item;
+                if (IsDisposed || item == null) return;
+                int height = row.Remeasure(recalcCode: false);
+                if (heightCache.TryGetValue(item, out int cached) && height == cached) return;
+                RequestRelayout(row);
+            }));
+        }
+
+        private readonly HashSet<ChatMessageRow> relayoutPending = [];
+
         /// <summary>行内折叠（代码块展开/收起）后：重测该行高度并重排，行高随折叠收缩/展开。</summary>
         internal void RequestRelayout(ChatMessageRow row)
         {
             if (row?.Item != null)
+            {
                 heightCache[row.Item] = row.Remeasure();
+                measuredItems.Add(row.Item);
+            }
             RebuildSums();
             UpdateScrollbar();
             Relayout();
         }
 
         private bool inLayout;
+
+        /// <summary>上一次排版的正文行宽：滚动条显隐会改它，变了就得重测全部行高。</summary>
+        private int lastLayoutWidth = -1;
 
         private void RelayoutCore()
         {
@@ -680,6 +761,17 @@ namespace ChatFlow
                 foreach (var row in realized.Values.ToArray()) ReleaseRow(row);
                 Invalidate();
                 return;
+            }
+
+            // 滚动条显隐会改变行宽（宽度 → 换行 → 高度）：旧高度全部作废。
+            // 不作废就会按旧宽度少算末尾高度，滚动条到底了仍有一截正文看不到。
+            int layoutWidth = vbar.Visible ? Width - vbar.Width : Width;
+            if (layoutWidth != lastLayoutWidth)
+            {
+                lastLayoutWidth = layoutWidth;
+                ClearHeights();
+                RebuildSums();
+                UpdateScrollbar();
             }
 
             bool corrected;
@@ -691,7 +783,8 @@ namespace ChatFlow
 
                 int viewTop = vbar.Visible ? vbar.Value : 0;
                 int viewH = Math.Max(1, ClientSize.Height);
-                int buffer = viewH;
+                // 只留一小圈余量：markdown 行每条要几十毫秒渲染，多预算半屏等于每次滚动多渲两行（快速拖动卡顿主因）
+                int buffer = Dip(40);
 
                 int first = Math.Max(0, FindFirstIndexAt(viewTop - buffer));
                 int last = Math.Min(items.Count - 1, FindFirstIndexAt(viewTop + viewH + buffer));
@@ -745,6 +838,7 @@ namespace ChatFlow
                         if (linkHeight != cached)
                         {
                             heightCache[item] = linkHeight;
+                            measuredItems.Add(item);
                             corrected = true;
                         }
                         int linkInset = (int)Math.Round(12 * DeviceDpi / 96.0);
@@ -772,6 +866,7 @@ namespace ChatFlow
                         if (measuredCard != cached)
                         {
                             heightCache[item] = measuredCard;
+                            measuredItems.Add(item);
                             corrected = true;
                         }
                         int inset = (int)Math.Round(12 * DeviceDpi / 96.0);
@@ -792,6 +887,7 @@ namespace ChatFlow
                         if (measuredThinking != cached)
                         {
                             heightCache[item] = measuredThinking;
+                            measuredItems.Add(item);
                             corrected = true;
                         }
                         int thinkingInset = (int)Math.Round(12 * DeviceDpi / 96.0);
@@ -805,6 +901,7 @@ namespace ChatFlow
                     {
                         row = AcquireRow();
                         int measured = row.Bind(item, chatFont, rowWidth);
+                        measuredItems.Add(item);   // 真实渲染量过了，后续校正不必再重测
                         realized[item] = row;
                         row.SelectionToggled += Row_SelectionToggled;
                         row.ThinkingToggled += Row_ThinkingToggled;
@@ -816,10 +913,12 @@ namespace ChatFlow
                             corrected = true;
                         }
                     }
-                    else if (guard > 1)
+                    else if (!measuredItems.Contains(item))
                     {
-                        // 校正轮：已实例化行重测（Bind 时句柄未就绪的行此时已就绪）
+                        // 高度被作废过（宽度/结构变化）就补测：只测还没用真实渲染量过的行。
+                        // 放在第一轮而不是只在校正轮：否则这一屏的行永远停在粗估高度，底部正文被裁。
                         int measured = row.Remeasure();
+                        measuredItems.Add(item);
                         if (measured != cached)
                         {
                             heightCache[item] = measured;
@@ -837,6 +936,19 @@ namespace ChatFlow
                     UpdateScrollbar();
                 }
             } while (corrected && guard < 6);
+
+            if (corrected)
+            {
+                // 校正次数用尽：按最终前缀和再摆一次位置。否则行停在旧偏移上，
+                // 滚动条已按新高度到底，正文却还差一截（用户看到的末尾截断）。
+                int viewTop = vbar.Visible ? vbar.Value : 0;
+                int finalWidth = vbar.Visible ? Width - vbar.Width : Width;
+                foreach (var (item, row) in realized.ToArray())
+                {
+                    if (!itemIndex.TryGetValue(item, out int idx)) continue;
+                    row.SetBounds(0, prefixSum[idx] - viewTop, finalWidth, prefixSum[idx + 1] - prefixSum[idx]);
+                }
+            }
         }
 
         /// <summary>按 heightCache（已测量项）+ 估算（未测量项）重建前缀和。</summary>
@@ -1007,6 +1119,7 @@ namespace ChatFlow
                 int rowWidth = vbar.Visible ? Width - vbar.Width : Width;
                 int measured = row.Bind(item, chatFont, rowWidth);
                 if (measured > 0) heightCache[item] = measured;
+                measuredItems.Add(item);
                 RebuildSums();
                 UpdateScrollbar();
                 Relayout();
@@ -1107,11 +1220,13 @@ namespace ChatFlow
             else if (vbar.Visible)
             {
                 int lines = delta > 0 ? -vbar.SmallChange * 3 : vbar.SmallChange * 3;
-                SetScrollValueInternal(Math.Max(vbar.Minimum, Math.Min(MaxScrollValue, vbar.Value + lines)));
+                int target = Math.Max(vbar.Minimum, Math.Min(MaxScrollValue, vbar.Value + lines));
+                // 先定跟随状态再滚：重排（ValueChanged 里触发）会按它决定是否贴底
                 // 滚到底部恢复自动跟随；**向上滚（或任何离开末尾的动作）立即暂停自动跟随**
-                autoScrollToEnd = vbar.Value >= MaxScrollValue;
-                Relayout();
-                UpdateJumpToEndButton();
+                autoScrollToEnd = target >= MaxScrollValue;
+                PauseMarkdown();   // 滚轮翻历史：同用户拖动，先按纯文本排
+                SetScrollValueInternal(target);
+                // 重排与浮动按钮由 vbar_ValueChanged 完成；这里再调一次等于每格滚轮重排两遍
                 UserScrolled?.Invoke(this, EventArgs.Empty);
             }
         }
@@ -1129,7 +1244,7 @@ namespace ChatFlow
             if (inLayout) return;
             // 宽度变化会改变换行 → 旧高度全部失效。释放已实例化行强制按新宽度重新 Bind 测量，
             // 否则残留旧高度/仅用估算，宽高不匹配会在底部留下大片空白（要向上滚才看得到文字）。
-            heightCache.Clear();
+            ClearHeights();
             foreach (var row in realized.Values.ToArray())
                 ReleaseRow(row);
             UpdateScrollAndLayout();
@@ -1274,7 +1389,7 @@ namespace ChatFlow
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            heightCache.Clear();
+            ClearHeights();
             UpdateScrollAndLayout();
         }
 

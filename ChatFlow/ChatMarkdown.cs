@@ -37,6 +37,13 @@ namespace ChatFlow
         /// </summary>
         public const int MaxSegments = 8;
 
+        /// <summary>
+        /// 超过这个长度的正文不再走 markdown：SetMarkdown 实测 0.38ms/字且随长度超线性
+        /// （2 千字 0.8 秒、6 千字 6.5 秒、1.2 万字 21 秒），纯文本 FCTB + 正则样式 1.2 万字只要 8ms。
+        /// 长回复按带样式的纯文本渲染（代码块仍会着色/可折叠），短回复才用 markdown。
+        /// </summary>
+        public const int MaxChars = 1500;
+
         /// <summary>把 markdown 文本切成「散文段 / 围栏代码段」：散文交 MarkdownTextBox，代码段交 FCTB 按语言渲染。
         /// 围栏行本身不进入任何段（只作分隔）；未闭合围栏的剩余部分按代码处理（流式半截安全）。</summary>
         public static List<(bool IsCode, string Content, string Lang)> SplitSegments(string text)
