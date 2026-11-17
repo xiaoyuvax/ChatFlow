@@ -980,11 +980,12 @@ namespace ChatFlow
         /// 高频调用按 250ms 节流为全量重建；force=true 时跳过节流（阶段切换：占位→内容、完成）。</summary>
         public void UpdateStreamingMessage(ChatTurn turn, string fullText, bool force = false)
         {
-            var item = items.FirstOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
+            // 长正文会被拆成多个分片：只有最后一片在视口底部，取第一片时它早已滚出屏幕，等于每拍都整表重建
+            var item = items.LastOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
             if (item == null)
             {
                 RebuildItems();
-                item = items.FirstOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
+                item = items.LastOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
                 if (item == null) return;
             }
 
