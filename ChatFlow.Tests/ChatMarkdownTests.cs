@@ -18,6 +18,32 @@ namespace ChatFlow.Tests
         public void IsMarkdown_DetectsCommonSyntax(string text)
             => Assert.True(ChatMarkdown.IsMarkdown(text));
 
+        /// <summary>markdown 散文块由 CDS.Markdown 的 MarkdownTextBox（RichTextBox）渲染，与 FCTB 的隐藏标记无关：
+        /// 这条路径必须自己把源码标记去掉，否则聊天里会看到 ## / **。</summary>
+        [StaFact]
+        public void MarkdownProse_RendersWithoutSourceMarkers()
+        {
+            using var box = new CDS.Markdown.MarkdownTextBox();
+            box.SetMarkdown("""
+                ## 1. 迭代不依赖提交
+
+                **粗体** 与 `code` 与 ~~删除~~ 与 [文档](https://example.com)
+
+                > 引用
+
+                - 第一项
+
+                | a | b |
+                |---|---|
+                | 1 | 2 |
+                """);
+            string text = box.Text;
+            foreach (string marker in new[] { "##", "**", "`", "~~", "](", ">", "---", "|" })
+                Assert.DoesNotContain(marker, text);
+            Assert.Contains("引用", text);
+            Assert.Contains("文档", text);
+        }
+
         [Theory]
         [InlineData("你好，世界。")]
         [InlineData("价格是 3 * 4 = 12")]

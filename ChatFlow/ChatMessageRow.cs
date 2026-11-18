@@ -1,5 +1,6 @@
 using System.Drawing.Drawing2D;
 using FastColoredTextBoxNS;
+using FastColoredTextBoxNS.Text;
 #if NET8_0_OR_GREATER
 using CDS.Markdown;
 #endif
@@ -237,7 +238,7 @@ namespace ChatFlow
                 {
                     txt.SetFontPreserveZoom(font);
                     txt.SetTextCaretEnd(body);
-                    ChatTextStyler.ApplyBody(txt, body);
+                    ChatTextStyler.ApplyBody(txt, body, item.Turn.Streaming);
                 }
             }
             _bodyKey = bodyKey;
@@ -518,7 +519,7 @@ namespace ChatFlow
             ShowMarkdown(false);
             string body = ChatTextStyler.IndentPromptBlocks(fullText);
             txt.SetTextCaretEnd(body);
-            ChatTextStyler.ApplyBody(txt, body);
+            ChatTextStyler.ApplyBody(txt, body, Item.Turn.Streaming);
             _binding = false;
         }
 
@@ -840,19 +841,22 @@ namespace ChatFlow
         /// <summary>右键请求菜单（参数为屏幕坐标）。</summary>
         public event Action<Point> ContextMenuRequested;
 
-        /// <summary>当前文本中的可点击链接（ChatTextStyler 赋样式时一并算出，供命中测试）。</summary>
-        internal List<ChatTextStyler.ChatLink> LinkSpans;
-
         /// <summary>true：滚轮滚动本控件自身（内容封顶时用）；false：转发给聊天容器。</summary>
         public bool ScrollSelf { get; set; }
 
-        /// <summary>非链接区域的常规光标（FCTB 构造期设为 IBeam，在此捕获后按需还原）。</summary>
-        private readonly Cursor plainCursor;
-
         public RowTextBox()
         {
-            plainCursor = Cursor ?? Cursors.IBeam;
+            // 链接识别、点击命中与手型光标都由 FCTB 负责（MarkdownLinks / MarkdownLinkClicked）
+            MarkdownLinksEnabled = true;
+            MarkdownLinkClicked += (_, e) => LinkClicked?.Invoke(KindOf(e.Link), e.Link.Target);
         }
+
+        /// <summary>FCTB 的链接种类 → 聊天层的种类（图像文件单独一类，宿主据此预览而不是当文本打开）。</summary>
+        private static ChatTextStyler.ChatLinkKind KindOf(MarkdownLink link)
+            => link.Kind == MarkdownLinkKind.Url
+                ? ChatTextStyler.ChatLinkKind.Url
+                : ChatMedia.IsImage(link.Target) ? ChatTextStyler.ChatLinkKind.ImageFile
+                : ChatTextStyler.ChatLinkKind.File;
 
         protected override void OnMouseWheel(MouseEventArgs e)
         {
@@ -865,28 +869,11 @@ namespace ChatFlow
             MouseWheelForwarded?.Invoke(e.Delta, ModifierKeys == Keys.Control);
         }
 
-        protected override void OnMouseMove(MouseEventArgs e)
-        {
-            base.OnMouseMove(e);
-            // 无链接行（多数）早退：连 PointToPosition 都不算
-            if ((LinkSpans == null || LinkSpans.Count == 0) && Cursor != Cursors.Hand) return;
-            // FCTB 自身在 OnMouseMove 里会把光标重置为 defaultCursor；此处后置赋值，
-            // 且经公开 setter 写回（FCTB 重写 Cursor，setter 同步 defaultCursor），悬浮态才稳定
-            bool link = ChatTextStyler.LinkAt(LinkSpans, PointToPosition(e.Location)) != null;
-            if ((Cursor == Cursors.Hand) != link)
-                Cursor = link ? Cursors.Hand : plainCursor;
-        }
-
         protected override void OnMouseDown(MouseEventArgs e)
         {
-            base.OnMouseDown(e); // FCTB 在此命中折叠标记并展开/收起
+            base.OnMouseDown(e); // FCTB 在这里处理折叠标记的展开/收起与链接点击
             if (e.Button == MouseButtons.Left && e.X < LeftIndent)
                 FoldingToggled?.Invoke();
-            else if (e.Button == MouseButtons.Left)
-            {
-                var link = ChatTextStyler.LinkAt(LinkSpans, PointToPosition(e.Location));
-                if (link != null) LinkClicked?.Invoke(link.Value.Kind, link.Value.Target);
-            }
         }
 
         protected override void OnMouseUp(MouseEventArgs e)

@@ -1,3 +1,4 @@
+using FastColoredTextBoxNS.Text;
 using FastColoredTextBoxNS.Types;
 using Xunit;
 using ChatFlow;
@@ -33,15 +34,53 @@ namespace ChatFlow.Tests
             var chars = box[1];
             string line2 = box.GetLineText(1);
             Assert.Contains("**", line2);
-            Assert.True(HasStyle(chars, line2.IndexOf("**", StringComparison.Ordinal), ChatTextStyler.BoldStyleField), "粗体样式未生效");
+            Assert.True(HasStyle(chars, line2.IndexOf("**", StringComparison.Ordinal), box.SyntaxHighlighter.MdBoldStyle), "粗体样式未生效");
             // 行内代码
             var line = box[2];
             string line3 = box.GetLineText(2);
-            Assert.True(HasStyle(line, line3.IndexOf("`var", StringComparison.Ordinal), ChatTextStyler.InlineCodeStyleField), "行内代码样式未生效");
+            Assert.True(HasStyle(line, line3.IndexOf("`var", StringComparison.Ordinal), box.SyntaxHighlighter.MdInlineCodeStyle), "行内代码样式未生效");
             // URL
-            Assert.True(HasStyle(line, line3.IndexOf("https://", StringComparison.Ordinal), ChatTextStyler.LinkStyleField), "链接样式未生效");
+            Assert.True(HasStyle(line, line3.IndexOf("https://", StringComparison.Ordinal), box.SyntaxHighlighter.MdLinkStyle), "链接样式未生效");
             // 标题
-            Assert.True(HasStyle(box[3], 0, ChatTextStyler.HeadingStyleField), "标题样式未生效");
+            Assert.True(HasStyle(box[3], 2, box.SyntaxHighlighter.MdH1Style), "标题样式未生效");
+        }
+
+        [StaFact]
+        public void Body_MarkdownMarkers_AreHidden()
+        {
+            using var box = NewBox();
+            string text = "## 标题 **加粗** 与 *斜体* 和 `code`";
+            box.Text = text;
+            ChatTextStyler.ApplyBody(box, text);
+
+            string line = box.GetLineText(0);
+            int heading = line.IndexOf("标题", StringComparison.Ordinal);
+            int bold = line.IndexOf("**", StringComparison.Ordinal);
+            int italic = line.IndexOf("*斜", StringComparison.Ordinal);
+            int code = line.IndexOf('`');
+            Assert.True(box.IsCharHidden(box[0], 0), "标题 # 未隐藏");
+            Assert.True(box.IsCharHidden(box[0], bold), "粗体标记未隐藏");
+            Assert.True(box.IsCharHidden(box[0], bold + 1), "粗体标记未隐藏");
+            Assert.True(box.IsCharHidden(box[0], italic), "斜体标记未隐藏");
+            Assert.True(box.IsCharHidden(box[0], code), "行内代码标记未隐藏");
+            Assert.False(box.IsCharHidden(box[0], heading), "正文被误隐藏");
+            Assert.Equal(text, box.Text); // 只影响显示，不改文本
+        }
+
+        [StaFact]
+        public void Body_MarkdownMarkers_InCode_AreNotHidden()
+        {
+            using var box = NewBox();
+            string text = "```\nint** p = q; // `not code`\n```\n与 `a**b`";
+            box.Text = text;
+            ChatTextStyler.ApplyBody(box, text);
+
+            string fenceLine = box.GetLineText(1);
+            Assert.False(box.IsCharHidden(box[1], fenceLine.IndexOf("**", StringComparison.Ordinal)), "围栏代码里的 ** 被隐藏了");
+            Assert.False(box.IsCharHidden(box[1], fenceLine.IndexOf('`')), "围栏代码里的反引号被隐藏了");
+            string inlineLine = box.GetLineText(3);
+            Assert.False(box.IsCharHidden(box[3], inlineLine.IndexOf("**", StringComparison.Ordinal)), "行内代码里的 ** 被隐藏了");
+            Assert.True(box.IsCharHidden(box[3], inlineLine.IndexOf('`')), "行内代码的定界反引号未隐藏");
         }
 
         [StaFact]
@@ -53,14 +92,14 @@ namespace ChatFlow.Tests
             ChatTextStyler.ApplyBody(box, text);
 
             string line0 = box.GetLineText(0);
-            Assert.True(HasStyle(box[0], line0.IndexOf("J:/", StringComparison.Ordinal), ChatTextStyler.PathStyleField), "盘符路径未着色");
+            Assert.True(HasStyle(box[0], line0.IndexOf("J:/", StringComparison.Ordinal), box.SyntaxHighlighter.MdLinkStyle), "盘符路径未着色");
             // 路径内的空格不应截断着色（"My God"）
-            Assert.True(HasStyle(box[0], line0.IndexOf("[NEW]", StringComparison.Ordinal), ChatTextStyler.PathStyleField), "路径中段未着色");
+            Assert.True(HasStyle(box[0], line0.IndexOf("[NEW]", StringComparison.Ordinal), box.SyntaxHighlighter.MdLinkStyle), "路径中段未着色");
             // URL 里的 "s:/" 不能被误判成盘符路径
             string line1 = box.GetLineText(1);
             int urlAt = line1.IndexOf("https://", StringComparison.Ordinal);
-            Assert.False(HasStyle(box[1], urlAt + 4, ChatTextStyler.PathStyleField), "URL 被误判为路径");
-            Assert.True(HasStyle(box[1], urlAt, ChatTextStyler.LinkStyleField), "URL 链接样式未生效");
+            Assert.DoesNotContain(box.MarkdownLinks, l => l.Kind == MarkdownLinkKind.LocalFile && l.Line == 1);
+            Assert.True(HasStyle(box[1], urlAt, box.SyntaxHighlighter.MdLinkStyle), "URL 链接样式未生效");
         }
 
         [StaFact]
@@ -529,11 +568,11 @@ namespace ChatFlow.Tests
 
             var line = box[0];
             string lineText = box.GetLineText(0);
-            Assert.True(HasStyle(line, lineText.IndexOf("ChatFlow", StringComparison.Ordinal), ChatTextStyler.PathStyleField),
+            Assert.True(HasStyle(line, lineText.IndexOf("ChatFlow", StringComparison.Ordinal), box.SyntaxHighlighter.MdLinkStyle),
                 "路径本体未着色");
-            Assert.False(HasStyle(line, lineText.IndexOf("status", StringComparison.Ordinal), ChatTextStyler.PathStyleField),
+            Assert.False(HasStyle(line, lineText.IndexOf("status", StringComparison.Ordinal), box.SyntaxHighlighter.MdLinkStyle),
                 "尾部命令被误判为路径");
-            Assert.False(HasStyle(line, lineText.IndexOf("--short", StringComparison.Ordinal), ChatTextStyler.PathStyleField),
+            Assert.False(HasStyle(line, lineText.IndexOf("--short", StringComparison.Ordinal), box.SyntaxHighlighter.MdLinkStyle),
                 "尾部参数被误判为路径");
         }
 
@@ -547,9 +586,9 @@ namespace ChatFlow.Tests
 
             var line = box[0];
             string lineText = box.GetLineText(0);
-            Assert.True(HasStyle(line, lineText.IndexOf("My Docs", StringComparison.Ordinal), ChatTextStyler.PathStyleField),
+            Assert.True(HasStyle(line, lineText.IndexOf("My Docs", StringComparison.Ordinal), box.SyntaxHighlighter.MdLinkStyle),
                 "围栏内带空格的路径未着色");
-            Assert.False(HasStyle(line, lineText.IndexOf('"'), ChatTextStyler.PathStyleField), "引号不应算作路径");
+            Assert.False(HasStyle(line, lineText.IndexOf('"'), box.SyntaxHighlighter.MdLinkStyle), "引号不应算作路径");
         }
 
         [Fact]
@@ -580,20 +619,20 @@ namespace ChatFlow.Tests
             Assert.Null(ChatTextStyler.LinkAt(links, -1));   // FCTB 越界点（PointToPosition 返回 -1）
             Assert.Null(ChatTextStyler.LinkAt(null, 3));
         }
-
         [StaFact]
-        public void Body_PopulatesLinkSpans_OnRealBox()
+        public void Body_PopulatesMarkdownLinks_OnRealBox()
         {
             using var box = NewBox();
-            string text = "结果：J:/My God/x.png 已保存；见 https://venice.ai/doc";
+            string text = "结果图：J:/My God/x.png 已保存；见 https://venice.ai/doc";
             box.Text = text;
             ChatTextStyler.ApplyBody(box, text);
 
-            Assert.Equal(2, box.LinkSpans.Count);
-            var (img, url) = (box.LinkSpans[0], box.LinkSpans[1]);
-            Assert.Equal(ChatTextStyler.ChatLinkKind.ImageFile, img.Kind);
+            var links = box.MarkdownLinks;
+            Assert.Equal(2, links.Count);
+            var (img, url) = (links[0], links[1]);
+            Assert.Equal(MarkdownLinkKind.LocalFile, img.Kind);
             Assert.Equal("J:/My God/x.png", text.Substring(img.Start, img.Length));
-            Assert.Equal(ChatTextStyler.ChatLinkKind.Url, url.Kind);
+            Assert.Equal(MarkdownLinkKind.Url, url.Kind);
             Assert.Equal("https://venice.ai/doc", text.Substring(url.Start, url.Length));
         }
 

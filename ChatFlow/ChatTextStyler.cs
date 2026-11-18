@@ -16,9 +16,8 @@ namespace ChatFlow
     public static class ChatTextStyler
     {
         // ============ 样式（按当前主题重建；FCTB 渲染期只读。Style 为抽象类，实际用 TextStyle） ============
-        private static Style BoldStyle, ItalicStyle, InlineCodeStyle, CodeBlockStyle, HeadingStyle, LinkStyle,
-            PathStyle, ToolCallStyle, ToolOkStyle, ToolFailStyle, ToolOutputStyle, AttachmentStyle, ReasoningMarkStyle,
-            PromptBlockStyle, ResMarkStyle;
+        private static Style CodeBlockStyle, PathStyle, ToolCallStyle, ToolOkStyle, ToolFailStyle, ToolOutputStyle,
+            AttachmentStyle, ReasoningMarkStyle, PromptBlockStyle, ResMarkStyle;
 
         private static int _paletteStamp = int.MinValue;
 
@@ -27,16 +26,11 @@ namespace ChatFlow
         {
             var p = ChatTheme.Current;
             int stamp = p?.GetHashCode() ?? 0;
-            if (_paletteStamp == stamp && BoldStyle != null) return;
+            if (_paletteStamp == stamp && ToolCallStyle != null) return;
             _paletteStamp = stamp;
             if (p == null)
             {
-                BoldStyle = new TextStyle(Brushes.Black, null, FontStyle.Bold);
-                ItalicStyle = new TextStyle(Brushes.Gray, null, FontStyle.Italic);
-                InlineCodeStyle = new TextStyle(Brushes.Black, Brushes.Gainsboro, FontStyle.Regular);
                 CodeBlockStyle = new TextStyle(Brushes.Black, Brushes.WhiteSmoke, FontStyle.Regular);
-                HeadingStyle = new TextStyle(Brushes.MidnightBlue, null, FontStyle.Bold);
-                LinkStyle = new TextStyle(Brushes.RoyalBlue, null, FontStyle.Underline);
                 PathStyle = new TextStyle(Brushes.Teal, null, FontStyle.Regular);
                 ToolCallStyle = new TextStyle(Brushes.DarkGoldenrod, null, FontStyle.Bold);
                 ToolOkStyle = new TextStyle(Brushes.SeaGreen, null, FontStyle.Bold);
@@ -52,12 +46,7 @@ namespace ChatFlow
             else
             {
                 Brush B(Color c) => new SolidBrush(c);
-                BoldStyle = new TextStyle(B(p.Fore), null, FontStyle.Bold);
-                ItalicStyle = new TextStyle(B(p.ForeDim), null, FontStyle.Italic);
-                InlineCodeStyle = new TextStyle(B(p.InputFore), B(p.Control), FontStyle.Regular);
                 CodeBlockStyle = new TextStyle(B(p.InputFore), B(p.InputBack), FontStyle.Regular);
-                HeadingStyle = new TextStyle(B(p.Accent), null, FontStyle.Bold);
-                LinkStyle = new TextStyle(B(Color.FromArgb(0x6F, 0xB3, 0xF0)), null, FontStyle.Underline);
                 PathStyle = new TextStyle(B(Color.FromArgb(0x6F, 0xCF, 0xCF)), null, FontStyle.Regular);
                 ToolCallStyle = new TextStyle(B(Color.FromArgb(0xE7, 0xC4, 0x6A)), null, FontStyle.Bold);
                 ToolOkStyle = new TextStyle(B(Color.FromArgb(0x7F, 0xDB, 0x9A)), null, FontStyle.Bold);
@@ -74,52 +63,14 @@ namespace ChatFlow
 
         private static Style[] AllStyles =>
         [
-            BoldStyle, ItalicStyle, InlineCodeStyle, CodeBlockStyle, HeadingStyle, LinkStyle, PathStyle,
+            CodeBlockStyle, PathStyle,
             ToolCallStyle, ToolOkStyle, ToolFailStyle, ToolOutputStyle, AttachmentStyle, ReasoningMarkStyle,
             PromptBlockStyle, ResMarkStyle
         ];
 
         // ============ 正则（^ 锚点配 Multiline：逐行生效） ============
-        private static readonly Regex BoldRegex = new(@"\*\*(?<text>[^\*\n]+)\*\*", RegexOptions.Compiled);
-        private static readonly Regex ItalicRegex = new(@"(?<!\*)\*(?<text>[^\*\n]+)\*(?!\*)", RegexOptions.Compiled);
-        private static readonly Regex InlineCodeRegex = new(@"`(?<text>[^`\n]+)`", RegexOptions.Compiled);
         private static readonly Regex FenceRegex = new(@"^```.*$", RegexOptions.Compiled | RegexOptions.Multiline);
         // 起点不能用 \b：.NET 的 \w 含 CJK，「见https://x」两侧都是词字符，\b 不成立就漏识别。
-        private static readonly Regex UrlRegex = new(
-            @"(?<![A-Za-z0-9_])https?://[^\s<>""'`{}|\\^（）()【】「」『』《》〈〉，。；：、！？…]+", RegexOptions.Compiled);
-        // 本地路径：盘符（J:/、J:\）或 UNC（\\server\share）；允许路径内空格（如 "My God"），
-        // 但不吞尾部空白与 CJK/全角字符（中文紧随路径时在此断开）。
-        // 括号只有当「)」后面紧跟分隔符时才算路径的一部分（C:\Program Files (x86)\X）；
-        // 报错引用「x.csproj(11,14)」的 ) 后面不是分隔符，路径仍在 ( 处截断。
-        // 前置 (?<![A-Za-z0-9]) 避免把 "https://" 里的 "s:/" 误判成盘符路径。
-        private const string PathChunk = @"[^\s<>|:*?""`(),;\r\n\u3000-\u303F\u3400-\u4DBF\u4E00-\u9FFF\uFF00-\uFFEF]+";
-        private const string PathParen = @"\([^()\r\n]*\)(?=[\\/])";
-        private const string PathTail = @"(?:" + PathChunk + "|" + PathParen + ")(?: ?(?:" + PathChunk + "|" + PathParen + "))*";
-        private static readonly Regex PathRegex = new(
-            @"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)" + PathTail,
-            RegexOptions.Compiled);
-        private static readonly Regex HeadingRegex = new(@"^(?<text>#{1,6}\s+.+)$", RegexOptions.Compiled | RegexOptions.Multiline);
-        // 可点击的本地路径：与 <see cref="PathRegex"/> 同起点，但允许 CJK 文件名，且必须以「.扩展名 + 非字母数字边界」收尾，
-        // 否则 "J:/x.png已保存" 会被整句吞掉而认不出图片；是否图片仍由 AttachmentHelper.IsImage 判定（扩展名列表单一来源）。
-        private const string LinkChunk = @"[^\s<>|:*?""`(),;\r\n]+";
-        // 续段起点只能由空格或「括号目录」唯一确定（旧的 `(?: ?(?:Chunk|Paren))*` 允许把一个无扩展名的
-        // 长路径词任意切分成多段，尾部 `\.扩展名` 匹配失败后回溯组合爆炸：36 字符要试 2^35 种切法，
-        // 一条 `ListDir(path=C:/Users/.../OpenLoop)` 就能让 UI 线程卡死数分钟）。
-        private const string LinkTail = LinkChunk +
-            @"(?:" + PathParen + LinkChunk + @"| (?:" + PathParen + @")?" + LinkChunk + @")*";
-        private static readonly Regex LinkPathRegex = new(
-            @"(?<![A-Za-z0-9])(?:[A-Za-z]:[\\/]|\\\\)" + LinkTail +
-            @"\.[A-Za-z0-9]{1,8}(?![A-Za-z0-9])",
-            RegexOptions.Compiled);
-
-        // 被引号/括符围栏的路径（"C:\My App"、(C:\My App)、「…」、「【…】」等）：围栏内空格一定属于路径，
-        // 且允许 CJK 文件名（围栏已经给出明确边界）。围栏字符本身不算路径。
-        private const string PathFenceOpen = @"[""'\`（(【「『《〈{“‘<]";
-        private const string PathFenceClose = @"[""'\`）)】」』》〉}”’>]";
-        private static readonly Regex FencedPathRegex = new(
-            PathFenceOpen + @"(?<p>(?:[A-Za-z]:[\\/]|\\\\)[^""'\`）)】」』》〉}”’<>\r\n]+?)" + PathFenceClose,
-            RegexOptions.Compiled);
-        // 形如「» #3 tool(args) → 成功 · 420ms」：序号可选（历史文本用这种带 » 的旧格式）
         private static readonly Regex ToolCallRegex = new(@"^»\s*(#\d+\s+)?\S+\s*\(.*$", RegexOptions.Compiled | RegexOptions.Multiline);
         // 新格式「 >> Tool[args] · 348ms」/ 原生「 >> > Tool[args]」：只认这个形状，正文里的普通函数调用不会被当成工具行
         private static readonly Regex ToolLineRegex = new(
@@ -171,63 +122,38 @@ namespace ChatFlow
             var links = new List<ChatLink>();
             if (string.IsNullOrEmpty(text)) return links;
             string s = NormalizeNewlines(text);
-            foreach (var span in CollectUrlSpans(s))
-                links.Add(new ChatLink(span.Start, span.Length, ChatLinkKind.Url, s.Substring(span.Start, span.Length)));
-            foreach (var span in CollectPathSpans(s, requireExtension: true))
+            var lineStarts = new List<int> { 0 };
+            for (int i = 0; i < s.Length; i++)
+                if (s[i] == '\n') lineStarts.Add(i + 1);
+            // 识别规则只有一份：FCTB 的 MarkdownLinkScanner。这里只把行内偏移换成绝对偏移并区分图像文件
+            foreach (var link in MarkdownLinkScanner.Collect(s))
             {
-                string target = s.Substring(span.Start, span.Length);
-                links.Add(new ChatLink(span.Start, span.Length,
-                    ChatMedia.IsImage(target) ? ChatLinkKind.ImageFile : ChatLinkKind.File, target));
+                if (link.Line >= lineStarts.Count) continue;
+                var kind = link.Kind == MarkdownLinkKind.Url
+                    ? ChatLinkKind.Url
+                    : ChatMedia.IsImage(link.Target) ? ChatLinkKind.ImageFile : ChatLinkKind.File;
+                // 聊天里只把「文件」当链接：无扩展名的目录路径多是命令参数，点开没有意义
+                if (kind == ChatLinkKind.File && !HasExtension(link.Target)) continue;
+                links.Add(new ChatLink(lineStarts[link.Line] + link.Start, link.Length, kind, link.Target));
             }
-            links.Sort((a, b) => a.Start.CompareTo(b.Start));
             return links;
         }
 
         // ============ 路径 / URL 的区间识别（高亮与点击共用同一套边界规则） ============
+
+        /// <summary>路径末段带扩展名（含点且点不是最后一个字符）。</summary>
+        private static bool HasExtension(string path)
+        {
+            int slash = Math.Max(path.LastIndexOf('/'), path.LastIndexOf('\\'));
+            int dot = path.LastIndexOf('.');
+            return dot > slash && dot < path.Length - 1;
+        }
 
         /// <summary>文本区间：绝对字符偏移，按 FCTB 的「每行一个 \n」模型（\r\n 视为一个换行）。</summary>
         internal readonly record struct TextSpan(int Start, int Length);
 
         private static string NormalizeNewlines(string text)
             => text.IndexOf('\r') < 0 ? text : text.Replace("\r\n", "\n");
-
-        /// <summary>URL 区间：遇空白/引号/中文标点等非法 URL 字符即中断，再去掉句末标点与 markdown 包裹符
-        /// （<c>**http://x**</c> 尾部两个星号是粗体标记，不是 URL 的一部分；工具行的 <c>[参数]</c> 尾部方括号同理）。
-        /// 显示层截断出来的「前缀…」不算 URL，否则点开的是半截地址。</summary>
-        internal static List<TextSpan> CollectUrlSpans(string text)
-        {
-            var spans = new List<TextSpan>();
-            if (string.IsNullOrEmpty(text)) return spans;
-            string s = NormalizeNewlines(text);
-            foreach (Match m in UrlRegex.Matches(s))
-            {
-                string value = m.Value;
-                int len = value.Length;
-                bool bracketed = value.IndexOf('[') >= 0;   // IPv6 字面量 http://[::1]，尾部 ] 属于地址
-                while (len > 0)
-                {
-                    char tail = value[len - 1];
-                    if (".,;:!?'\"*".IndexOf(tail) >= 0 || (tail == ']' && !bracketed)) { len--; continue; }
-                    break;
-                }
-                if (len == 0) continue;
-                int end = m.Index + len;
-                if (end < s.Length && s[end] == '…') continue;
-                if (IsPlaceholderUrl(value.Substring(0, len))) continue;
-                spans.Add(new TextSpan(m.Index, len));
-            }
-            return spans;
-        }
-
-        /// <summary>只有协议或只剩点号的伪地址（文档里的 <c>https://...</c> 占位符）：点开必然失败，不标链接。</summary>
-        private static bool IsPlaceholderUrl(string url)
-        {
-            int sep = url.IndexOf("://", StringComparison.Ordinal);
-            if (sep < 0) return false;
-            for (int i = sep + 3; i < url.Length; i++)
-                if (url[i] != '.') return false;
-            return true;
-        }
 
         /// <summary>工具行里要染色的位置：工具名、左方括号、行尾右方括号。`&gt;&gt;` 前缀、参数与耗时保持正文色。</summary>
         private static List<TextSpan> CollectToolMarkSpans(string text)
@@ -246,75 +172,16 @@ namespace ChatFlow
             return spans;
         }
 
-        /// <summary>
-        /// 路径区间：引号/括符围栏内的整段（空格一定属于路径），以及非围栏候选按「末尾空格不属于路径」收缩后的部分。
-        /// <paramref name="requireExtension"/> 为真时只保留「.扩展名」收尾的候选（可点击的文件链接）。
-        /// </summary>
-        internal static List<TextSpan> CollectPathSpans(string text, bool requireExtension)
+        /// <summary>把 FCTB 识别出的可点击区间（URL / 本地路径）刷成给定样式：识别规则只维护一处。</summary>
+        private static void ApplyLinkStyle(RowTextBox box, Style style)
         {
-            var spans = new List<TextSpan>();
-            if (string.IsNullOrEmpty(text)) return spans;
-            string s = NormalizeNewlines(text);
-
-            foreach (Match m in FencedPathRegex.Matches(s))
+            foreach (var link in box.MarkdownLinks)
             {
-                int start = m.Groups["p"].Index;
-                int end = TrimEndSpaces(s, start, m.Groups["p"].Index + m.Groups["p"].Length);
-                if (end > start) spans.Add(new TextSpan(start, end - start));
+                if (link.Line < 0 || link.Line >= box.LinesCount) continue;
+                int end = Math.Min(link.Start + link.Length, box[link.Line].Count);
+                if (end > link.Start)
+                    new TextSelectionRange(box, link.Start, link.Line, end, link.Line).SetStyle(style);
             }
-
-            var candidates = requireExtension ? LinkPathRegex : PathRegex;
-            foreach (Match m in candidates.Matches(s))
-            {
-                int start = m.Index;
-                int end = TrimPathEnd(s, start, m.Index + m.Length);
-                if (end > start && !Overlaps(spans, start, end))
-                    spans.Add(new TextSpan(start, end - start));
-            }
-
-            spans.Sort((a, b) => a.Start.CompareTo(b.Start));
-            return spans;
-        }
-
-        private static int TrimEndSpaces(string s, int start, int end)
-        {
-            while (end > start && char.IsWhiteSpace(s[end - 1])) end--;
-            return end;
-        }
-
-        /// <summary>
-        /// 末尾空格不属于路径：从尾部往前，只要「空格后的末段」既不含分隔符也不是「名字.扩展名」，
-        /// 就把该段连同空格一起丢掉（`C:\x\ChatFlow status --short` → `C:\x\ChatFlow`）。
-        /// 路径中段的空格（后面还有分隔符）仍属于路径（`C:\Program Files\App\x.exe`）。
-        /// </summary>
-        internal static int TrimPathEnd(string s, int start, int end)
-        {
-            end = TrimEndSpaces(s, start, end);
-            while (end > start)
-            {
-                int sp = s.LastIndexOf(' ', end - 1, end - start);
-                if (sp < start) break;
-                var tail = s.AsSpan(sp + 1, end - sp - 1);
-                if (tail.IndexOfAny('\\', '/') >= 0 || LooksLikeFileTail(tail)) break;
-                end = TrimEndSpaces(s, start, sp);
-            }
-            return end;
-        }
-
-        private static bool LooksLikeFileTail(ReadOnlySpan<char> tail)
-        {
-            int dot = tail.LastIndexOf('.');
-            if (dot <= 0 || tail.Length - dot - 1 is < 1 or > 8) return false;
-            foreach (char c in tail[(dot + 1)..])
-                if (!char.IsAsciiLetterOrDigit(c)) return false;
-            return true;
-        }
-
-        private static bool Overlaps(List<TextSpan> spans, int start, int end)
-        {
-            foreach (var span in spans)
-                if (start < span.Start + span.Length && span.Start < end) return true;
-            return false;
         }
 
         /// <summary>按绝对字符偏移给区间刷样式（FCTB 的 SetStyle 只收 Regex，收缩后的区间得自己映射到 Place）。</summary>
@@ -359,7 +226,7 @@ namespace ChatFlow
 
         // ============ 入口 ============
         /// <summary>正文消息样式。text 为 null/空时仅清空旧样式。</summary>
-        public static void ApplyBody(RowTextBox box, string text)
+        public static void ApplyBody(RowTextBox box, string text, bool streaming = false)
         {
             EnsureStyles();
             if (box == null || box.IsDisposed) return;
@@ -368,21 +235,15 @@ namespace ChatFlow
                 box.ClearFoldingMarkers();
                 var range = box.Range;
                 if (ResetStyles) range.ClearStyle(AllStyles);
-                box.LinkSpans = CollectLinks(text);
                 if (string.IsNullOrEmpty(text)) return;
 
                 // 提示词块底带先铺（作为底色层），其余样式再叠上去：块内路径/行内代码仍能看清
                 ApplyPromptBlockStyle(box, text);
                 // 分辨率档位词（8K/4K…）：先标出来提醒留意，路径/链接等更具体的样式仍可覆盖它
                 range.SetStyle(ResMarkStyle, ResolutionWordRegex);
-                // 路径先上，再上「行内代码/URL」——后应用的样式覆盖前者（代码内的路径不抢行内代码底色）
-                ApplySpanStyles(box, PathStyle, CollectPathSpans(text, requireExtension: false));
-                range.SetStyle(InlineCodeStyle, InlineCodeRegex);
+                // markdown 着色、源码标记隐藏、URL/路径识别、表格对齐：全部由 FCTB 承担
+                box.ApplyMarkdownBody(alignTables: !streaming);
                 range.SetStyle(CodeBlockStyle, FenceRegex);
-                range.SetStyle(BoldStyle, BoldRegex);
-                range.SetStyle(ItalicStyle, ItalicRegex);
-                ApplySpanStyles(box, LinkStyle, CollectUrlSpans(text));
-                range.SetStyle(HeadingStyle, HeadingRegex);
                 ApplyCodeBlockFolding(box, text);
                 ApplyBraceBlockFolding(box, text); // 无围栏的多行 JSON（正文里也可能出现）
             }
@@ -402,7 +263,6 @@ namespace ChatFlow
                 box.ClearFoldingMarkers();
                 var range = box.Range;
                 if (ResetStyles) range.ClearStyle(AllStyles);
-                box.LinkSpans = CollectLinks(text);
                 if (string.IsNullOrEmpty(text)) return;
 
                 range.SetStyle(ToolCallStyle, ToolCallRegex);
@@ -414,7 +274,7 @@ namespace ChatFlow
                 range.SetStyle(AttachmentStyle, AttachmentHeaderRegex);
                 range.SetStyle(ReasoningMarkStyle, ReasoningMarkRegex);
                 // 最后上路径：让灰底输出行里的本地路径也醒目
-                ApplySpanStyles(box, PathStyle, CollectPathSpans(text, requireExtension: false));
+                ApplyLinkStyle(box, PathStyle);
                 // 工具行只有「名字」「[」「]」染色，其余（>>、参数、耗时）保持正文色
                 ApplySpanStyles(box, ToolCallStyle, CollectToolMarkSpans(text));
                 range.SetStyle(CodeBlockStyle, FenceRegex);
@@ -816,12 +676,7 @@ namespace ChatFlow
         // ============ 测试辅助 ============
 
         /// <summary>测试访问：关键样式实例（随主题重建，始终指向当前实例）。</summary>
-        internal static Style BoldStyleField => BoldStyle;
-        internal static Style ItalicStyleField => ItalicStyle;
-        internal static Style InlineCodeStyleField => InlineCodeStyle;
-        internal static Style LinkStyleField => LinkStyle;
         internal static Style PathStyleField => PathStyle;
-        internal static Style HeadingStyleField => HeadingStyle;
         internal static Style ToolCallStyleField => ToolCallStyle;
         internal static Style ToolOkStyleField => ToolOkStyle;
         internal static Style ToolFailStyleField => ToolFailStyle;

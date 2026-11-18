@@ -8,7 +8,7 @@ namespace ChatFlow.Tests
 {
     /// <summary>
     /// 聊天区可点击链接（URL / 图像文件路径）STA 单测：
-    /// 命中测试映射（PointToPosition → LinkSpans）与行→容器事件转发。
+    /// 命中测试映射（PointToPosition → MarkdownLinks）与行→容器事件转发。
     /// 合成点击：把链接字符偏移经 PositionToPoint 转成坐标，反射调用 RowTextBox.OnMouseDown（protected）。
     /// </summary>
     [Collection("ThemeState")]
@@ -126,7 +126,7 @@ namespace ChatFlow.Tests
                 Assert.NotEmpty(realized.Keys);
                 // 取真正含链接的那一行（用户行无链接，点它不触发）
                 var row = realized.Values.Cast<ChatMessageRow>()
-                    .FirstOrDefault(r => GetField<RowTextBox>(r, "txt").LinkSpans.Count > 0);
+                    .FirstOrDefault(r => GetField<RowTextBox>(r, "txt").MarkdownLinks.Count > 0);
                 Assert.NotNull(row);
                 var box = GetField<RowTextBox>(row, "txt");
 
@@ -144,7 +144,7 @@ namespace ChatFlow.Tests
 
         /// <summary>
         /// Markdown 渲染分支（MarkdownTextBox 关掉了 DetectUrls）：URL / 图片路径仍要可点，
-        /// 命中测试按纯文本偏移（GetCharIndexFromPosition）与 LinkSpans 对齐。
+        /// 命中测试按纯文本偏移（GetCharIndexFromPosition）与 MarkdownLinks 对齐。
         /// </summary>
         [StaFact]
         public void MarkdownBox_ClickOnImagePath_RaisesLinkClicked()
