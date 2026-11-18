@@ -103,6 +103,24 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
+        public void Body_ToolLine_IsNotStyledAsMarkdownBlockquote()
+        {
+            // 工具行（">> Tool[args]"）以 &gt;&gt; 开头会被 markdown 块引用识别（(? {0,3}>)+ 把 >> 当引号吞掉），
+            // MarkdownBlockStyle 会整行铺灰底；工具行是执行提示不是 markdown 块，不能套引用样式。
+            using var box = NewBox();
+            string text = " >> Shell[command=git status --short]";
+            box.Text = text;
+            ChatTextStyler.ApplyBody(box, text);
+
+            Assert.False(HasStyle(box[0], 2, box.SyntaxHighlighter.MdBlockquoteStyle), "工具行不该套用 markdown 块引用样式（会整行铺灰底）");
+
+            using var quoteBox = NewBox();
+            quoteBox.Text = "> 被引用的提示词";
+            ChatTextStyler.ApplyBody(quoteBox, "> 被引用的提示词");
+            Assert.True(HasStyle(quoteBox[0], 0, quoteBox.SyntaxHighlighter.MdBlockquoteStyle), "真正的引用块仍应套引用样式");
+        }
+
+        [StaFact]
         public void Body_CodeBlockFences_FormFoldingPairs()
         {
             using var box = NewBox();

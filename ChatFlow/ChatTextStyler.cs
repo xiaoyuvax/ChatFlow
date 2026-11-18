@@ -7,7 +7,7 @@ namespace ChatFlow
 {
     /// <summary>
     /// 聊天文本美化器：regex 驱动的实时样式 + 结构化折叠（基于 FCTB 的 SetStyle / FoldingMarkers）。
-    /// 正文样式：**粗体**、*斜体*、`行内代码`、```代码块```（底色+左边框，可折叠）、URL、本地文件路径、井号标题。
+    /// 正文样式：**粗体**、*斜体*、`行内代码`、```代码块```（左边框，可折叠）、URL、本地文件路径、井号标题。
     /// 思考区样式：» 工具调用行（琥珀粗体）、→ 成功/失败（绿/红）、输出行（灰）、【附件】标题、🧠 标记。
     /// 折叠：``` 围栏成对折叠，长代码块默认收起（点击行左 ○ 标记展开）；【附件】/🧠/» 行到下一个空行折叠为块。
     /// 标记字符一律选用 Consolas 可渲染的字形（emoji 会显示成方框）。
@@ -30,7 +30,7 @@ namespace ChatFlow
             _paletteStamp = stamp;
             if (p == null)
             {
-                CodeBlockStyle = new TextStyle(Brushes.Black, Brushes.WhiteSmoke, FontStyle.Regular);
+                CodeBlockStyle = new TextStyle(Brushes.Gray, null, FontStyle.Regular);
                 PathStyle = new TextStyle(Brushes.Teal, null, FontStyle.Regular);
                 ToolCallStyle = new TextStyle(Brushes.DarkGoldenrod, null, FontStyle.Bold);
                 ToolOkStyle = new TextStyle(Brushes.SeaGreen, null, FontStyle.Bold);
@@ -46,7 +46,7 @@ namespace ChatFlow
             else
             {
                 Brush B(Color c) => new SolidBrush(c);
-                CodeBlockStyle = new TextStyle(B(p.InputFore), B(p.InputBack), FontStyle.Regular);
+                CodeBlockStyle = new TextStyle(B(p.ForeDim), null, FontStyle.Regular);
                 PathStyle = new TextStyle(B(Color.FromArgb(0x6F, 0xCF, 0xCF)), null, FontStyle.Regular);
                 ToolCallStyle = new TextStyle(B(Color.FromArgb(0xE7, 0xC4, 0x6A)), null, FontStyle.Bold);
                 ToolOkStyle = new TextStyle(B(Color.FromArgb(0x7F, 0xDB, 0x9A)), null, FontStyle.Bold);
@@ -243,6 +243,9 @@ namespace ChatFlow
                 range.SetStyle(ResMarkStyle, ResolutionWordRegex);
                 // markdown 着色、源码标记隐藏、URL/路径识别、表格对齐：全部由 FCTB 承担
                 box.ApplyMarkdownBody(alignTables: !streaming);
+                // 工具行（">> Tool[args]"）以 &gt;&gt; 开头会被 markdown 块引用识别（(? {0,3}>)+ 把 >> 当引号吞掉），
+                // MarkdownBlockStyle 会整行铺灰底；工具行是执行提示不是 markdown 块，清掉块级样式。
+                ClearToolLineBlockStyles(box, text);
                 range.SetStyle(CodeBlockStyle, FenceRegex);
                 ApplyCodeBlockFolding(box, text);
                 ApplyBraceBlockFolding(box, text); // 无围栏的多行 JSON（正文里也可能出现）
@@ -250,6 +253,22 @@ namespace ChatFlow
             catch
             {
                 // 样式失败不影响文本内容显示
+            }
+        }
+
+        /// <summary>工具行（&gt;&gt; Tool[…]）是执行提示而非 markdown 块：块引用识别会把 &gt;&gt; 当引号吞掉、
+        /// MarkdownBlockStyle 于是整行铺灰底。这里清掉工具行上的块级样式，只留工具行自身的着色。</summary>
+        private static void ClearToolLineBlockStyles(RowTextBox box, string text)
+        {
+            if (string.IsNullOrEmpty(text)) return;
+            var highlighter = box.SyntaxHighlighter;
+            var blockquote = highlighter?.MdBlockquoteStyle;
+            if (blockquote == null) return;
+            string[] lines = text.Replace("\r\n", "\n").Split('\n');
+            for (int i = 0; i < lines.Length; i++)
+            {
+                if (!ToolLineRegex.IsMatch(lines[i])) continue;
+                new TextSelectionRange(box, 0, i, lines[i].Length, i).ClearStyle(blockquote);
             }
         }
 

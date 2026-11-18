@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 
 namespace ChatFlow.Tests
 {
@@ -184,6 +184,55 @@ namespace ChatFlow.Tests
             turn.ToolStarted(" >> Read[path=a.cs]");
             turn.ToolStarted(" >> Read[path=a.cs]");
             Assert.Equal(" >> Read[path=a.cs]", turn.ToolStatusText);
+        }
+
+        [Fact]
+        public void PhaseThinkingExpandsIndependently()
+        {
+            var turn = new ChatTurn
+            {
+                Assistant = new ChatMessage("assistant", ""),
+                TimelineText = ""
+            };
+            turn.Phases.Add(("想一", ""));
+            turn.Phases.Add(("想二", ""));
+
+            var first = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = 0 };
+            var second = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = 1 };
+            Assert.False(first.ThinkingExpanded);
+            Assert.False(second.ThinkingExpanded);
+
+            first.ToggleThinking();
+            Assert.True(first.ThinkingExpanded);
+            Assert.False(second.ThinkingExpanded);
+
+            second.ToggleThinking();
+            first.ToggleThinking();
+            Assert.False(first.ThinkingExpanded);
+            Assert.True(second.ThinkingExpanded);
+        }
+
+        [Fact]
+        public void PhaseItem_ShowsOwnThinkingAndAnswer()
+        {
+            var turn = new ChatTurn
+            {
+                Assistant = new ChatMessage("assistant", "正文一正文二"),
+                TimelineText = "想一\n\n想二",
+                ToolStepCount = 7
+            };
+            turn.Phases.Add(("想一", "正文一"));
+            turn.Phases.Add(("想二", "正文二"));
+
+            var first = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = 0 };
+            Assert.Equal("正文一", first.Text);
+            Assert.Equal("想一", first.ThinkingText);
+            Assert.Equal("思考与工具过程 · 7 步", first.ThinkingHeaderText);   // 首段沿用整轮统计
+
+            var second = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = 1 };
+            Assert.Equal("正文二", second.Text);
+            Assert.Equal("想二", second.ThinkingText);
+            Assert.Equal("思考与工具过程 · 想二", second.ThinkingHeaderText);   // 后续分段只标自己的摘要
         }
     }
 }

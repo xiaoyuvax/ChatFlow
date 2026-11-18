@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace ChatFlow
 {
@@ -56,6 +56,21 @@ namespace ChatFlow
         /// </summary>
         [JsonIgnore]
         public string TimelineText { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 分段展示：正文出现前的思维/工具为一段，正文之后又出现思维就另起一段。
+        /// 每段 =（本段思维与工具过程，本段正文）。空列表 = 旧行为（整轮一个折叠区）。
+        /// </summary>
+        [JsonIgnore]
+        public List<(string Thinking, string Answer)> Phases { get; } = [];
+
+        /// <summary>
+        /// 每段折叠区各自的展开状态（键 = Phases 下标）。整轮的 ThinkingExpanded 只服务不分段的旧数据，
+        /// 分段后不能再共用一个值：用户展开第一段，不该把后面几段一起拉开。
+        /// </summary>
+        [JsonIgnore]
+        public Dictionary<int, bool> PhaseExpanded { get; } = new();
+
 
         /// <summary>思考区汇总：已执行的工具调用步数。</summary>
         [JsonIgnore]

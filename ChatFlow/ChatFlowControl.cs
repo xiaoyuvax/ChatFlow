@@ -1,4 +1,4 @@
-using FastColoredTextBoxNS;
+﻿using FastColoredTextBoxNS;
 
 namespace ChatFlow
 {
@@ -361,13 +361,12 @@ namespace ChatFlow
         /// <summary>点替身条：折叠该块，并把视口滚回原折叠头处（折叠头贴住顶部），替身随即隐藏。</summary>
         private void CollapseStickyThinking()
         {
-            var turn = stickyTarget?.Turn;
-            if (turn == null) return;
-            turn.ThinkingExpanded = false;
+            var item = stickyTarget;
+            if (item?.Turn == null) return;
+            // 只收起点中的这一段：分段之后整轮共用一个开关会连累别的折叠区
+            if (item.ThinkingExpanded) item.ToggleThinking();
             autoScrollToEnd = false;
             DataSource?.RaiseChanged();   // → RebuildItems：行高与条目全量重建
-            var item = items.FirstOrDefault(i =>
-                i.Turn == turn && i.ThinkingText != null && !i.IsThinkingContinuation);
             int idx = item != null ? items.IndexOf(item) : -1;
             if (idx >= 0 && vbar.Visible)
                 SetScrollValueInternal(Math.Min(prefixSum[idx], MaxScrollValue));
@@ -511,6 +510,65 @@ namespace ChatFlow
             return lineStarts.Count > 0 && lineStarts[best].Inside;
         }
 
+        /// <summary>加一条助手条（phase=-1 表示不分段，按整轮显示）。返回实际加进去的最后一片；
+        /// 流式空占位返回 null（不加条目，位置留给末尾指示行）。</summary>
+        private ChatFlowItem AddAssistantPiece(ChatTurn turn, int phase)
+        {
+            var message = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = phase };
+            string answer = message.Text;
+            string thinking = message.ThinkingText;
+            if (turn.Streaming && answer.Length == 0 && thinking == null)
+                return null;   // 还没出字也没有思考区：这一行只会是「空白文本框」
+
+            if (thinking != null && thinking.Length > MaxItemChars && message.ThinkingExpanded)
+            {
+                // 展开的长思维链按行拆片：单片仍远低于整行高度上限（Win32 把控件位置钳在 ±32767），
+                // 这样展开后不需要内部滚动条。后续分片不再显示折叠头，答复挂在最后一片。
+                // 流式期间同样要切：不切的话一条会涨成几万像素高，整行定位触发 ±32767 钳位，
+                // 重排校正再也收敛不了（界面表现为卡死）。
+                var parts = SplitLongText(thinking);
+                ChatFlowItem last = null;
+                for (int i = 0; i < parts.Count; i++)
+                {
+                    ChatFlowItem piece = i == 0
+                        ? message
+                        : new ChatFlowItem(turn, ChatFlowItemKind.Assistant)
+                        {
+                            IsContinuation = true,
+                            IsThinkingContinuation = true,
+                            Phase = phase
+                        };
+                    piece.ThinkingOverride = parts[i];
+                    piece.TextOverride = i == parts.Count - 1 ? answer : "";
+                    items.Add(piece);
+                    last = piece;
+                }
+                return last;
+            }
+
+            if (answer.Length > MaxItemChars)
+            {
+                // 单条太高会撞 Win32 的 32767 像素定位上限（控件 Y 被钳到 -32768），
+                // 表现为滚到底也看不到末尾内容；按行边界拆成多片，每片都远低于上限。
+                // 流式期间也要切，理由同上（一行涨太高会让重排校正循环收敛不了）。
+                var parts = SplitLongText(answer);
+                ChatFlowItem last = null;
+                for (int p = 0; p < parts.Count; p++)
+                {
+                    ChatFlowItem piece = p == 0
+                        ? message
+                        : new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { IsContinuation = true, Phase = phase };
+                    piece.TextOverride = parts[p];
+                    items.Add(piece);
+                    last = piece;
+                }
+                return last;
+            }
+
+            items.Add(message);
+            return message;
+        }
+
         private void RebuildItems()
         {
             // 重建会换掉全部条目对象并清空高度缓存：先记住视口顶部是哪一轮，重建后钉回去。
@@ -533,54 +591,15 @@ namespace ChatFlow
                     // 流式回合：正文/思考一有内容才出助手条；两者都没有时不占位，把位置留给末尾指示行
                     if (turn.Assistant != null || turn.Streaming)
                     {
-                        var message = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
-                        string answer = message.Text;
-                        string thinking = message.ThinkingText;
-                        if (turn.Streaming && answer.Length == 0 && thinking == null)
-                            lastMessage = null;   // 还没出字也没有思考区：这一行只会是「空白文本框」，位置留给末尾的指示行
-                        else if (thinking != null && thinking.Length > MaxItemChars && message.ThinkingExpanded)
+                        // 有分段就一段一条：正文之后的新思维因此落到新的折叠区、排在正文下面；旧数据退回整轮一条
+                        if (turn.Phases.Count > 0)
                         {
-                            // 展开的长思维链按行拆片：单片仍远低于整行高度上限（Win32 把控件位置钳在 ±32767），
-                            // 这样展开后不需要内部滚动条。后续分片不再显示折叠头，答复挂在最后一片。
-                            // 流式期间同样要切：不切的话一条会涨成几万像素高，整行定位触发 ±32767 钳位，
-                            // 重排校正再也收敛不了（界面表现为卡死）。
-                            var parts = SplitLongText(thinking);
-                            for (int i = 0; i < parts.Count; i++)
-                            {
-                                ChatFlowItem piece = i == 0
-                                    ? message
-                                    : new ChatFlowItem(turn, ChatFlowItemKind.Assistant)
-                                    {
-                                        IsContinuation = true,
-                                        IsThinkingContinuation = true
-                                    };
-                                piece.ThinkingOverride = parts[i];
-                                piece.TextOverride = i == parts.Count - 1 ? answer : "";
-                                items.Add(piece);
-                                lastMessage = piece;
-                            }
+                            ChatFlowItem last = null;
+                            for (int p = 0; p < turn.Phases.Count; p++)
+                                last = AddAssistantPiece(turn, p) ?? last;
+                            lastMessage = last;
                         }
-                        else if (answer.Length > MaxItemChars)
-                        {
-                            // 单条太高会撞 Win32 的 32767 像素定位上限（控件 Y 被钳到 -32768），
-                            // 表现为滚到底也看不到末尾内容；按行边界拆成多片，每片都远低于上限。
-                            // 流式期间也要切，理由同上（一行涨太高会让重排校正循环收敛不了）。
-                            var parts = SplitLongText(answer);
-                            for (int p = 0; p < parts.Count; p++)
-                            {
-                                ChatFlowItem piece = p == 0
-                                    ? message
-                                    : new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { IsContinuation = true };
-                                piece.TextOverride = parts[p];
-                                items.Add(piece);
-                                lastMessage = piece;
-                            }
-                        }
-                        else
-                        {
-                            items.Add(message);
-                            lastMessage = message;
-                        }
+                        else lastMessage = AddAssistantPiece(turn, -1);
                     }
                     if (lastMessage != null) lastMessage.IsPairEnd = true;
 
@@ -1305,6 +1324,14 @@ namespace ChatFlow
 
             // 长正文会被拆成多个分片：只有最后一片在视口底部，取第一片时它早已滚出屏幕，等于每拍都整表重建
             var item = items.LastOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
+            // 分段变了（正文之后又出思维 → 多一段）：条目对不上就整表重建，让新折叠区挂到正文下面
+            int wantedPhase = turn.Phases.Count - 1;   // 没有分段时是 -1
+            if (item != null && item.Phase != wantedPhase)
+            {
+                RebuildItems();
+                item = items.LastOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
+                if (item == null) return;
+            }
             if (item == null)
             {
                 RebuildItems();
@@ -1688,6 +1715,8 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
 
         public ChatTurn Turn { get; }
         public ChatFlowItemKind Kind { get; }
+        /// <summary>分段序号（-1 = 不分段，按整轮显示）。</summary>
+        internal int Phase { get; init; } = -1;
         internal bool IsPairEnd { get; set; }
         /// <summary>超长正文被拆片后的分片文本；null = 按 Turn 生成。</summary>
         internal string TextOverride { get; set; }
@@ -1711,6 +1740,14 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
             {
                 if (Kind == ChatFlowItemKind.Thinking) return string.Empty;
                 if (TextOverride != null) return TextOverride;
+                if (Phase >= 0)
+                {
+                    string phaseAnswer = Phase < Turn.Phases.Count ? Turn.Phases[Phase].Answer : string.Empty;
+                    // 末段正文还没出字时，正文区照旧显示正在执行的工具行（与不分段时的流式分支一致）
+                    if (phaseAnswer.Length == 0 && Turn.Streaming && Phase == Turn.Phases.Count - 1)
+                        return Turn.ToolStatusText ?? string.Empty;
+                    return phaseAnswer;
+                }
                 if (IsUser) return Turn.UserText;
                 if (Turn.Streaming)
                     return string.IsNullOrEmpty(Turn.AssistantText) ? Turn.ToolStatusText ?? string.Empty : Turn.AssistantText;
@@ -1727,6 +1764,11 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
                 if (IsUser || Kind == ChatFlowItemKind.Thinking) return null;
                 if (ThinkingOverride != null) return ThinkingOverride;
                 if (IsContinuation) return null;
+                if (Phase >= 0)
+                {
+                    string thinking = Phase < Turn.Phases.Count ? Turn.Phases[Phase].Thinking : null;
+                    return string.IsNullOrEmpty(thinking) ? null : thinking;
+                }
                 if (!string.IsNullOrEmpty(Turn.TimelineText)) return Turn.TimelineText;
                 var parts = new List<string>();
                 if (!string.IsNullOrEmpty(Turn.ToolTraceText)) parts.Add(Turn.ToolTraceText);
@@ -1744,6 +1786,12 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
             {
                 const string title = "思考与工具过程";
                 if (IsUser) return title;
+                if (Phase > 0)
+                {
+                    // 后续分段不再沿用整轮步数统计：只标它自己的首行摘要
+                    string phasePreview = FirstLine(ThinkingText);
+                    return phasePreview == null ? title : $"{title} · {phasePreview}";
+                }
                 string stats = Turn.ToolStepCount > 0 ? $" · {Turn.ToolStepCount} 步" : "";
                 if (Turn.ToolTotalMs > 0) stats += $" · {FormatDuration(Turn.ToolTotalMs)}";
                 if (stats.Length > 0) return title + stats;
@@ -1767,12 +1815,20 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
 
         /// <summary>思考区是否展开（数据侧持有，跨重建保留；null=未交互按时间线有无决定：
         /// 有时间线（思维与工具交替）默认展开，否则看不到交错过程；纯推理仍折叠）。</summary>
-        public bool ThinkingExpanded => Turn.ThinkingExpanded ?? !string.IsNullOrEmpty(Turn.TimelineText);
+        public bool ThinkingExpanded
+            => Phase >= 0
+                ? (Turn.PhaseExpanded.TryGetValue(Phase, out bool expanded) ? expanded : DefaultThinkingExpanded)
+                : Turn.ThinkingExpanded ?? DefaultThinkingExpanded;
+
+        /// <summary>没交互过的默认值：宿主的设置优先；没设时有时间线（思维与工具交替）就展开，纯推理仍折叠。</summary>
+        private bool DefaultThinkingExpanded => Turn.ThinkingExpanded ?? !string.IsNullOrEmpty(Turn.TimelineText);
 
         /// <summary>切换思考区展开状态（重排由调用方触发）。</summary>
         public void ToggleThinking()
         {
-            Turn.ThinkingExpanded = !ThinkingExpanded;
+            // 每个折叠区各记各的：分段共用一个开关会让后面几段跟着一起开合
+            if (Phase >= 0) Turn.PhaseExpanded[Phase] = !ThinkingExpanded;
+            else Turn.ThinkingExpanded = !ThinkingExpanded;
         }
     }
 }
