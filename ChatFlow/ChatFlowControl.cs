@@ -426,25 +426,88 @@ namespace ChatFlow
 
         /// <summary>单条消息渲染上限（字符）：超过即按行边界拆片。
         /// 依据：Win32 子窗口定位在约 ±32767 像素处被钳制，一条几十万像素高的行会永久挡住末尾内容。</summary>
-        private const int MaxItemChars = 10_000;
+        internal const int MaxItemChars = 10_000;
 
-        private static List<string> SplitLongText(string text)
+        internal static List<string> SplitLongText(string text)
         {
             var parts = new List<string>();
+            if (string.IsNullOrEmpty(text)) { parts.Add(""); return parts; }
+
+            // 行首位置 + 该行是否在 ``` 围栏内。只在这些位置断开，分片里的围栏才能自己配平；
+            // 否则下一片会从代码块中间开始，围栏错位后被当成新的代码块，正文被染色/多出折叠区。
+            var lineStarts = new List<(int Pos, bool Inside)>();
+            bool inFence = false;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (i == 0 || text[i - 1] == '\n')
+                {
+                    lineStarts.Add((i, inFence));
+                    if (i + 2 < text.Length && text[i] == '`' && text[i + 1] == '`' && text[i + 2] == '`')
+                        inFence = !inFence;
+                }
+            }
+
             int start = 0;
+            string carry = "";   // 上一片在围栏内硬断时补的闭合围栏；这一片开头要重新打开
             while (start < text.Length)
             {
-                int len = Math.Min(MaxItemChars, text.Length - start);
-                if (start + len < text.Length)
+                int budget = MaxItemChars - carry.Length;
+                if (text.Length - start <= budget)
                 {
-                    int nl = text.LastIndexOf('\n', start + len - 1, len);
-                    if (nl > start + len / 2) len = nl + 1 - start;
+                    parts.Add(carry + text[start..]);
+                    break;
                 }
-                parts.Add(text.Substring(start, len));
-                start += len;
+
+                int limit = start + budget;
+                int split = SafeSplitBefore(lineStarts, start, limit);
+                if (split > start + budget / 2)
+                {
+                    parts.Add(carry + text[start..split]);
+                    carry = "";
+                    start = split;
+                    continue;
+                }
+
+                // 整窗都在同一个围栏里（超长代码块）：就地断，末尾补闭合、下一片开头补开局，
+                // 两片各自是合法代码块；否则后半段的围栏配对会整体错位。
+                int nl = text.LastIndexOf('\n', limit - 1, budget);
+                int cut = nl > start + budget / 2 ? nl + 1 : limit;
+                bool inside = InsideFence(lineStarts, cut);
+                parts.Add(carry + text[start..cut] + (inside ? (cut > 0 && text[cut - 1] == '\n' ? "```\n" : "\n```\n") : ""));
+                carry = inside ? "```\n" : "";
+                start = cut;
             }
-            if (parts.Count == 0) parts.Add("");
             return parts;
+        }
+
+        /// <summary>窗口内最后一个「围栏外」的行首位置；没有返回 -1。</summary>
+        private static int SafeSplitBefore(List<(int Pos, bool Inside)> lineStarts, int start, int limit)
+        {
+            int lo = 0, hi = lineStarts.Count - 1, best = -1;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) / 2;
+                if (lineStarts[mid].Pos <= limit) { best = mid; lo = mid + 1; }
+                else hi = mid - 1;
+            }
+            for (int i = best; i >= 0; i--)
+            {
+                if (lineStarts[i].Pos <= start) break;
+                if (!lineStarts[i].Inside) return lineStarts[i].Pos;
+            }
+            return -1;
+        }
+
+        private static bool InsideFence(List<(int Pos, bool Inside)> lineStarts, int offset)
+        {
+            int lo = 0, hi = lineStarts.Count - 1, best = 0;
+            while (lo <= hi)
+            {
+                int mid = (lo + hi) / 2;
+                if (lineStarts[mid].Pos <= offset) { best = mid; lo = mid + 1; }
+                else hi = mid - 1;
+            }
+            return lineStarts.Count > 0 && lineStarts[best].Inside;
         }
 
         private void RebuildItems()
