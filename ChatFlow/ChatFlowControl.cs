@@ -1702,9 +1702,9 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         public bool IsUser => Kind == ChatFlowItemKind.User;
 
         /// <summary>展示文本：助手条目在正文前附上可见的工具调用行（每次调用一行），示意 Agent 发起了工具/助理调用。
-        /// 流式期间**不堆积已完成工具行**（历史 bug：正文底部堆到 11 行，与思考区轨迹重复）——但正在执行的
-        /// 工具显示「正在调用 X…」实时状态（<see cref="ChatTurn.ToolStatusText"/>），避免长耗时工具（生图等）
-        /// 期间界面只有「思考中……」而无任何说明；执行结束后一次性前置完整工具行。</summary>
+        /// 流式期间**不堆积已完成工具行**（历史 bug：正文底部堆到 11 行，与思考区轨迹重复）——正文为空时
+        /// 只显示正在执行的工具行（<see cref="ChatTurn.ToolStatusText"/>，并行批次多行齐显、整批清除），
+        /// 避免长耗时工具（生图等）期间界面只有「思考中……」而无任何说明；执行结束后一次性前置完整工具行。</summary>
         public string Text
         {
             get

@@ -155,5 +155,35 @@ namespace ChatFlow.Tests
             Assert.Equal("正在调用 Grep…", item.Text);
             Assert.Equal("先看仓库。", item.ThinkingText);
         }
+
+        [Fact]
+        public void ToolStarted_ShowsParallelLinesInBody_UntilToolsFinish()
+        {
+            var turn = new ChatTurn
+            {
+                Assistant = new ChatMessage("assistant", ""),
+                Streaming = true
+            };
+            turn.ToolStarted(" >> Read[path=a.cs]");
+            turn.ToolStarted(" >> Grep[pattern=b]");
+            var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
+            Assert.Equal(" >> Read[path=a.cs]\n >> Grep[pattern=b]", item.Text);
+
+            turn.ToolsFinished();
+            Assert.Equal(string.Empty, item.Text);
+        }
+
+        [Fact]
+        public void ToolStarted_DoesNotStackSameLine()
+        {
+            var turn = new ChatTurn
+            {
+                Assistant = new ChatMessage("assistant", ""),
+                Streaming = true
+            };
+            turn.ToolStarted(" >> Read[path=a.cs]");
+            turn.ToolStarted(" >> Read[path=a.cs]");
+            Assert.Equal(" >> Read[path=a.cs]", turn.ToolStatusText);
+        }
     }
 }

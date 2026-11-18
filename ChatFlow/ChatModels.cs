@@ -73,9 +73,22 @@ namespace ChatFlow
         [JsonIgnore]
         public bool Streaming { get; set; }
 
-        /// <summary>流式期间「正在调用某工具」的实时状态文本。</summary>
+        /// <summary>流式期间「正在调用某工具」的实时状态文本（多行 = 并行批次同时执行）。
+        /// 由 <see cref="ToolStarted"/>/<see cref="ToolsFinished"/> 维护。</summary>
         [JsonIgnore]
         public string ToolStatusText { get; set; }
+
+        /// <summary>记录一个开始执行的工具行：并行批次同时显示，同一行不重复叠加。</summary>
+        public void ToolStarted(string line)
+        {
+            if (string.IsNullOrEmpty(line)) return;
+            ToolStatusText = string.IsNullOrEmpty(ToolStatusText) ? line
+                : ToolStatusText.Contains(line) ? ToolStatusText
+                : ToolStatusText + "\n" + line;
+        }
+
+        /// <summary>一批工具收尾：正文区的执行中提示整批清除。</summary>
+        public void ToolsFinished() => ToolStatusText = null;
 
         /// <summary>是否有思考区内容（决定折叠头是否显示）。</summary>
         [JsonIgnore]
