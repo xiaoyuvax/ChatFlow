@@ -9,13 +9,23 @@
     <LangVersion>13</LangVersion>
     <RootNamespace>ChatFlow</RootNamespace>
     <AssemblyName>ChatFlow</AssemblyName>
-    <Version>0.1.23</Version>
+    <Version>0.1.24</Version>
     <NoWarn>WFO1000</NoWarn>
   </PropertyGroup>
 
-  <!-- FCTB 只消费 NuGet 包：源码/包两套身份会让同一份 ChatFlow 代码在不同机器上编出不同依赖闭包。 -->
-  <ItemGroup>
-    <PackageReference Include="Vax-FCTB" Version="2.19.0.233" />
+  <!-- FCTB 是临时组件：检出在就用同级源码（与 components.json 的 fctb 条目对应，由 SourceSync 检出、由 Loop 迭代），
+       检出不在就退回 NuGet 包。包号由 OpenLoop 迭代时按 nuget.org 上 >= 参考版本的最新版注入
+       （-p:OpenLoopPkg_VaxFCTB=...，最新版编不过会退回参考版本）；单独构建时用下面这个参考版本。 -->
+  <PropertyGroup>
+    <OpenLoopPkg_VaxFCTB Condition="'$(OpenLoopPkg_VaxFCTB)' == ''">2.19.0.233</OpenLoopPkg_VaxFCTB>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(MSBuildThisFileDirectory)..\..\FastColoredTextBox\FastColoredTextBox\FastColoredTextBox.csproj')">
+    <ProjectReference Include="..\..\FastColoredTextBox\FastColoredTextBox\FastColoredTextBox.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="!Exists('$(MSBuildThisFileDirectory)..\..\FastColoredTextBox\FastColoredTextBox\FastColoredTextBox.csproj')">
+    <PackageReference Include="Vax-FCTB" Version="$(OpenLoopPkg_VaxFCTB)" />
   </ItemGroup>
 
   <ItemGroup Condition="'$(TargetFramework)' != 'net7.0-windows7.0'">

@@ -404,5 +404,74 @@ namespace ChatFlow.Tests
                 host.Hide();
             }
         }
+
+        /// <summary>滚动上限必须等于「内容高−视口高」：WinForms 的 LargeChange 读取值被当前 Maximum 钳住
+        /// （min(stored, Maximum-Minimum+1)），一次更新里既长内容又抬 Maximum 时若用 getter 凑 Maximum，
+        /// 会按旧的偏小值算（实测 139 vs 需要 172），末尾正文永远滚不到。</summary>
+        [StaFact]
+        public void UpdateScrollbar_RangeFollowsTotalHeight_WhenGrowingInOneStep()
+        {
+            using var flow = new ChatFlowControl { Size = new System.Drawing.Size(800, 500) };
+            using var host = new WF.Form { Size = new System.Drawing.Size(840, 560) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var totalField = typeof(ChatFlowControl).GetField("totalHeight",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var update = typeof(ChatFlowControl).GetMethod("UpdateScrollbar",
+                    BindingFlags.Instance | BindingFlags.NonPublic)!;
+                var vbar = (WF.VScrollBar)Field(flow, "vbar");
+
+                // 旧视口留下的低位范围：stored LargeChange=250 但 Maximum 只有 216（getter 读到 217）
+                vbar.Visible = true;
+                vbar.LargeChange = 250;
+                vbar.Maximum = 216;
+
+                totalField.SetValue(flow, flow.ClientSize.Height + 172);
+                update.Invoke(flow, null);
+
+                Assert.Equal(172, vbar.Maximum - vbar.LargeChange + 1);
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        /// <summary>会话停止后补一次重测：末尾行的高度被砍小（等价于「量在渲染完成前」留下的偏小值），
+        /// RemeasureLayout 必须按真实渲染长回来，视图仍贴底。</summary>
+        [StaFact]
+        public void RemeasureLayout_RestoresTrailingBodyHeight()
+        {
+            using var flow = new ChatFlowControl { Size = new System.Drawing.Size(800, 500) };
+            using var host = new WF.Form { Size = new System.Drawing.Size(840, 560) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                flow.Bind(LongBook(6));
+                Pump(400);
+                flow.ScrollToEnd();
+                Pump(300);
+
+                var last = Rows(flow).OrderBy(r => r.Top).Last();
+                int full = last.Height;
+                last.Height = full - 40;
+                Assert.Equal(full - 40, last.Height);
+
+                flow.RemeasureLayout();
+                Pump(300);
+
+                Assert.True(flow.AtEnd);
+                var again = Rows(flow).OrderBy(r => r.Top).Last();
+                Assert.InRange(again.Height, full - 2, full + 2);
+                Assert.InRange(again.Bottom, flow.ClientSize.Height - 2, flow.ClientSize.Height + 2);
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
     }
 }

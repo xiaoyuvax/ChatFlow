@@ -62,6 +62,9 @@ namespace ChatFlow
         /// <summary>点击可点击链接（URL / 图像文件路径）后触发；由容器转交宿主。</summary>
         public event Action<ChatFlowItem, ChatTextStyler.ChatLinkKind, string> LinkClicked;
 
+        /// <summary>行内子控件取到焦点（用户点进正文/思考区/代码块）：行本身不取焦点，只能冒泡给容器。</summary>
+        internal event EventHandler ChildFocused;
+
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public ChatFlowItem Item { get; internal set; }
 
@@ -719,6 +722,12 @@ namespace ChatFlow
 #endif
             }
             base.Dispose(disposing);
+        }
+
+        protected override void OnControlAdded(ControlEventArgs e)
+        {
+            base.OnControlAdded(e);
+            e.Control.Enter += (_, _) => ChildFocused?.Invoke(this, EventArgs.Empty);
         }
 
         protected override void OnSizeChanged(EventArgs e)

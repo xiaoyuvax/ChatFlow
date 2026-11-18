@@ -283,10 +283,11 @@ namespace ChatFlow
             UpdateJumpToEndButton();
         }
 
-        /// <summary>「跳到末尾」：恢复自动跟随、滚到底，按钮随之隐藏。</summary>
+        /// <summary>「跳到末尾」：恢复自动跟随、按真实渲染重测一遍可见行高，再滚到底。</summary>
         private void JumpToEnd()
         {
             autoScrollToEnd = true;
+            RemeasureLayout();   // 末尾正文常留着「量在渲染完成前」的偏小高度，滚到底前补一次
             ScrollToEnd();
             UpdateJumpToEndButton();
         }
@@ -840,8 +841,11 @@ namespace ChatFlow
             vbar.Minimum = 0;
             // WinForms 语义：可滚动上限 = Maximum - LargeChange + 1，故 Maximum 须按 LargeChange 抬高，
             // 使可滚动上限恰好 = maxScroll（内容末尾），否则末尾会多出可下拉的空白。
-            vbar.LargeChange = Math.Max(10, visibleH / 2);
-            vbar.Maximum = Math.Min(Math.Max(totalHeight - 1, 1), maxScroll + vbar.LargeChange - 1);
+            // 顺序不能反：LargeChange 的读取值会被「当前」Maximum 钳住（getter = min(stored, Maximum-Minimum+1)），
+            // 先设 LargeChange 再抬 Maximum 会拿到上一次的偏小值，滚动上限就短一截 —— 末尾正文永远滚不到。
+            int lc = Math.Max(10, visibleH / 2);
+            vbar.Maximum = Math.Min(Math.Max(totalHeight - 1, 1), maxScroll + lc - 1);
+            vbar.LargeChange = lc;
             vbar.SmallChange = 16;
             if (autoScrollToEnd)
                 SetScrollValueInternal(maxScroll);
@@ -1173,6 +1177,7 @@ namespace ChatFlow
                 return row;
             }
             var newRow = new ChatMessageRow(this);
+            newRow.ChildFocused += OnRowFocused;
             Controls.Add(newRow);
             return newRow;
         }
@@ -1234,6 +1239,24 @@ namespace ChatFlow
             else
                 Relayout();
             UpdateJumpToEndButton();
+        }
+
+        /// <summary>按真实渲染重测一遍可见行高并重排（跟随末尾时重排后仍停在末尾）。
+        /// 末尾正文的高度常在 markdown/隐藏态还没排完时就被量走，缓存留着偏小的值，
+        /// 表现是滚到底最后几行仍被裁；会话停止后用户点进聊天区或点「跳到末尾」时补这一刀。</summary>
+        public void RemeasureLayout()
+        {
+            if (items.Count == 0 || inLayout) return;
+            ClearHeights();
+            UpdateScrollAndLayout();
+        }
+
+        /// <summary>行内控件取到焦点：停在末尾且没有流式输出，说明用户正在看最新正文，补一次重测。</summary>
+        private void OnRowFocused(object sender, EventArgs e)
+        {
+            if (!autoScrollToEnd) return;
+            if (DataSource?.Turns.LastOrDefault()?.Streaming == true) return;
+            RemeasureLayout();
         }
 
         /// <summary>滚动到指定回话（顶部对齐可见）。</summary>
