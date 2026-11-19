@@ -1338,6 +1338,14 @@ namespace ChatFlow
                 item = items.LastOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
                 if (item == null) return;
             }
+            // 超长思维链/正文拆片后，末片存的是拆分那一刻的快照：就地重绑只会把旧文本再画一遍，
+            // 界面停在拆片处、要折叠再展开才更新。重建一次让末片按新文本重新切分。
+            if (item.IsContinuation)
+            {
+                RebuildItems();
+                item = items.LastOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
+                if (item == null) return;
+            }
 
             // 「工作中…」指示行与当前最后一轮的流式状态保持一致：流式期间常驻末尾，执行结束才整表重建把它删掉
             bool indicatorPresent = items.Any(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Thinking);
