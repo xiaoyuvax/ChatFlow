@@ -286,17 +286,18 @@ namespace ChatFlow
         /// <summary>「跳到末尾」：恢复自动跟随、按真实渲染重测一遍可见行高，再滚到底。</summary>
         private void JumpToEnd()
         {
-            autoScrollToEnd = true;
             RemeasureLayout();   // 末尾正文常留着「量在渲染完成前」的偏小高度，滚到底前补一次
             ScrollToEnd();
             UpdateJumpToEndButton();
         }
 
-        /// <summary>按当前滚动位置显隐并定位浮动按钮（不在末尾才显示）。</summary>
+        /// <summary>按当前滚动位置显隐并定位浮动按钮（用户滚离末尾、跟随已暂停时才显示）。
+        /// 不能按「当前不在末尾」判：流式正文每拍都在长，跟随滚到底之后的几毫秒里也「不在末尾」，
+        /// 按钮会一闪一闪地出现；而按钮一旦出现就意味着「用户正在读，别再滚」，所以只认跟随状态。</summary>
         private void UpdateJumpToEndButton()
         {
             if (jumpToEndButton == null || IsDisposed) return;
-            bool show = vbar.Visible && !IsAtEnd;
+            bool show = vbar.Visible && !autoScrollToEnd;
             if (jumpToEndButton.Visible != show) jumpToEndButton.Visible = show;
             if (show) LayoutJumpToEndButton();
         }
@@ -625,10 +626,11 @@ namespace ChatFlow
             if (autoScrollToEnd) ScrollToEnd();
         }
 
-        /// <summary>视口顶部所在的轮，以及在整个轮里的比例。
-        /// 必须按整轮算：长回答会被切成多个分片，只按单片算比例、还原时又会落到第一片上，
-        /// 视口就被拽回这一轮的开头（用户侧表现：滚到正文中间就弹回正文开始处）。</summary>
-        private (ChatTurn Turn, double Ratio)? CaptureTurnAnchor()
+        /// <summary>视口顶部所在的轮，以及轮顶到视口顶的像素偏移。
+        /// 必须按整轮算：长回答会被切成多个分片，只按单片算、还原时又会落到第一片上，
+        /// 视口就被拽回这一轮的开头。偏移必须是像素而不是比例：比例会随这一轮变高
+        /// （流式正文一直在长）不断变大，用户停在末尾上方阅读时文字会被一路推着滚。</summary>
+        private (ChatTurn Turn, int Offset)? CaptureTurnAnchor()
         {
             if (!vbar.Visible || items.Count == 0 || prefixSum.Length < items.Count + 1) return null;
             int idx = Math.Min(FindFirstIndexAt(vbar.Value), items.Count - 1);
@@ -637,13 +639,10 @@ namespace ChatFlow
             if (turn == null) return null;
 
             int start = TurnBlockStart(idx);
-            int end = TurnBlockEnd(idx);
-            int height = Math.Max(1, prefixSum[end + 1] - prefixSum[start]);
-            double ratio = Math.Clamp((vbar.Value - prefixSum[start]) / (double)height, 0, 1);
-            return (turn, ratio);
+            return (turn, Math.Max(0, vbar.Value - prefixSum[start]));
         }
 
-        private void RestoreTurnAnchor((ChatTurn Turn, double Ratio) anchor)
+        private void RestoreTurnAnchor((ChatTurn Turn, int Offset) anchor)
         {
             int idx = items.FindIndex(i => ReferenceEquals(i.Turn, anchor.Turn));
             if (idx < 0)
@@ -653,9 +652,9 @@ namespace ChatFlow
             }
             int start = TurnBlockStart(idx);
             int end = TurnBlockEnd(start);
-            int height = Math.Max(1, prefixSum[end + 1] - prefixSum[start]);
-            SetScrollValueInternal(Math.Min(MaxScrollValue,
-                prefixSum[start] + (int)Math.Round(height * anchor.Ratio)));
+            // 偏移落在轮内：这一轮变矮（折叠/估算收紧）时不出轮，也不越过末尾
+            int target = Math.Min(prefixSum[end + 1], prefixSum[start] + anchor.Offset);
+            SetScrollValueInternal(Math.Min(MaxScrollValue, target));
             Relayout();
         }
 
@@ -1243,9 +1242,10 @@ namespace ChatFlow
         /// <summary>当前允许的最大滚动位置（内容底对齐视口底）。</summary>
         private int MaxScrollValue => Math.Max(0, totalHeight - Math.Max(1, ClientSize.Height));
 
-        /// <summary>滚动到底部（跟随最新对话）。</summary>
+        /// <summary>滚动到底部（跟随最新对话）：到底即恢复自动跟随，「跳到末尾」按钮随之隐藏。</summary>
         public void ScrollToEnd()
         {
+            autoScrollToEnd = true;
             if (!vbar.Visible)
             {
                 Relayout();

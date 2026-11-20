@@ -143,6 +143,87 @@ namespace ChatFlow.Tests
             }
         }
 
+        /// <summary>
+        /// 用户停在「正在写的那一轮」里阅读（没到底，显示「跳到末尾」）：这一轮正文继续变长时，
+        /// 整表刷新不得按比例还原 —— 按比例会让视口随着这一轮变高一直往下滑（用户侧：文字一直在滚）。
+        /// </summary>
+        [StaFact]
+        public void StreamingTurnGrowth_WhilePinned_DoesNotMoveText()
+        {
+            using var flow = new ChatFlowControl
+            {
+                Size = new System.Drawing.Size(900, 600),
+                ChatFont = new System.Drawing.Font("Microsoft YaHei UI", 9F)
+            };
+            using var host = new WF.Form { Size = new System.Drawing.Size(940, 660) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var book = Book(out var streaming);
+                flow.Bind(book);
+                Pump(500);
+                var vbar = (WF.VScrollBar)Field(flow, "vbar");
+                Assert.True(vbar.Visible);
+
+                // 停在最后这一轮靠下的位置（不是末尾）
+                int max = Math.Max(0, vbar.Maximum - vbar.LargeChange + 1);
+                vbar.Value = Math.Max(0, max - 300);
+                Pump(300);
+                Assert.False(flow.AtEnd, "测试前提：视口应停在末尾上方");
+                Assert.True(((WF.Control)Field(flow, "jumpToEndButton")).Visible, "测试前提：应显示「跳到末尾」");
+
+                int pinned = vbar.Value;
+                for (int i = 0; i < 5; i++)
+                {
+                    streaming.AssistantText = Body(50) + Body((i + 1) * 10);
+                    book.RaiseChanged();   // 宿主整表刷新（结构变化）
+                    Pump(300);
+                    Assert.True(Math.Abs(vbar.Value - pinned) <= 2,
+                        $"第 {i + 1} 次刷新后视口漂移：{pinned} → {vbar.Value}");
+                }
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        [StaFact]
+        public void Streaming_WhileFollowing_KeepsJumpButtonHidden()
+        {
+            using var flow = new ChatFlowControl
+            {
+                Size = new System.Drawing.Size(900, 600),
+                ChatFont = new System.Drawing.Font("Microsoft YaHei UI", 9F)
+            };
+            using var host = new WF.Form { Size = new System.Drawing.Size(940, 660) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var book = Book(out var streaming);
+                flow.Bind(book);
+                Pump(500);
+                var button = (WF.Control)Field(flow, "jumpToEndButton");
+                Assert.True(flow.AtEnd);
+                Assert.False(button.Visible, "跟在末尾时不该显示「跳到末尾」");
+
+                for (int i = 0; i < 5; i++)
+                {
+                    streaming.AssistantText = Body(50) + Body((i + 1) * 10);
+                    book.RaiseChanged();
+                    Pump(300);
+                    Assert.True(flow.AtEnd, $"第 {i + 1} 次刷新后没跟到末尾");
+                    Assert.False(button.Visible, $"第 {i + 1} 次刷新时「跳到末尾」闪了一下");
+                }
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
         [StaFact]
         public void FullRebuild_WhileScrolledUp_KeepsViewport()
         {
