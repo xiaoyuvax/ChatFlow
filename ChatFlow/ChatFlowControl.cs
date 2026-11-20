@@ -37,6 +37,14 @@ namespace ChatFlow
 
         private Font chatFont = new("Microsoft YaHei UI", 9F);
         private bool autoScrollToEnd = true;
+
+        /// <summary>页面不在前台：只收数据，不做布局、行绑定与 markdown 重排。</summary>
+        private bool suspendRendering;
+        private bool renderDirty;
+
+        /// <summary>本次浏览里用户点开/收起过的折叠区（轮 + 分段）；没点过的历史行向上回溯时默认折叠。</summary>
+        private readonly HashSet<(ChatTurn Turn, int Phase)> thinkingTouched = [];
+
         private int totalHeight;
         private int[] prefixSum = [];
         private readonly Dictionary<ChatFlowItem, int> itemIndex = [];
@@ -220,6 +228,27 @@ namespace ChatFlow
             }
         }
 
+        /// <summary>暂停渲染：会话页切走时只保留数据更新，不做布局、行绑定与 markdown 重排。
+        /// 恢复时先回到底部，再按最新数据整表重建（流式输出随之继续）。</summary>
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public bool SuspendRendering
+        {
+            get => suspendRendering;
+            set
+            {
+                if (suspendRendering == value) return;
+                suspendRendering = value;
+                if (value) return;
+                autoScrollToEnd = true;
+                if (renderDirty)
+                {
+                    renderDirty = false;
+                    RebuildItems();
+                }
+                else ScrollToEnd();
+            }
+        }
+
         public ChatFlowControl()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint
@@ -365,6 +394,7 @@ namespace ChatFlow
             var item = stickyTarget;
             if (item?.Turn == null) return;
             // 只收起点中的这一段：分段之后整轮共用一个开关会连累别的折叠区
+            thinkingTouched.Add((item.Turn, item.Phase));
             if (item.ThinkingExpanded) item.ToggleThinking();
             autoScrollToEnd = false;
             DataSource?.RaiseChanged();   // → RebuildItems：行高与条目全量重建
@@ -572,6 +602,7 @@ namespace ChatFlow
 
         private void RebuildItems()
         {
+            if (suspendRendering) { renderDirty = true; return; }
             // 重建会换掉全部条目对象并清空高度缓存：先记住视口顶部是哪一轮，重建后钉回去。
             // 否则用户往上翻历史时，任何一次刷新（流式增量、宿主整表刷新）都会按估算重排，
             // 把眼前的正文弹到别处（用户侧表现：一拖滚动条就弹回某一行、开头文字选不住）。
@@ -780,7 +811,7 @@ namespace ChatFlow
 
         private void UpgradeMarkdownRows()
         {
-            if (IsDisposed || items.Count == 0) return;
+            if (IsDisposed || suspendRendering || items.Count == 0) return;
             // 只把已经实例化的行重升成 markdown，且高度按实测回填：整份高度缓存作废会让
             // 所有行在「估算 ↔ 实测」之间来回跳，滚动位置跟着被弹到别处。
             var anchor = CaptureAnchor();
@@ -875,6 +906,7 @@ namespace ChatFlow
         /// 行高以真实渲染测量为准（Bind 返回测量值），与估算不符时校正缓存并重排直至收敛。</summary>
         private void Relayout()
         {
+            if (suspendRendering) { renderDirty = true; return; }
             // 重入保护：滚动条 Value 变更会同步触发本方法（UpdateScrollbar 设值期间），
             // 重入时直接返回——外层校正循环会按新滚动值重排
             if (inLayout) return;
@@ -901,7 +933,7 @@ namespace ChatFlow
             {
                 relayoutPending.Remove(row);
                 var item = row.Item;
-                if (IsDisposed || item == null) return;
+                if (IsDisposed || suspendRendering || item == null) return;
                 int height = row.Remeasure(recalcCode: false);
                 if (heightCache.TryGetValue(item, out int cached) && height == cached) return;
                 RequestRelayout(row);
@@ -913,6 +945,7 @@ namespace ChatFlow
         /// <summary>行内折叠（代码块展开/收起）后：重测该行高度并重排，行高随折叠收缩/展开。</summary>
         internal void RequestRelayout(ChatMessageRow row)
         {
+            if (suspendRendering) { renderDirty = true; return; }
             var anchor = CaptureAnchor();
             if (row?.Item != null)
             {
@@ -1097,6 +1130,11 @@ namespace ChatFlow
                     }
                     if (!realized.TryGetValue(item, out var row))
                     {
+                        // 向上回溯历史时新填出来的行默认收起思考区：展开的长过程整屏都要排版，
+                        // 用户本次浏览里点过的折叠区保留自己的选择。
+                        if (item.Kind == ChatFlowItemKind.Assistant && !autoScrollToEnd
+                            && !thinkingTouched.Contains((item.Turn, item.Phase)))
+                            item.ForceThinkingCollapsed = true;
                         row = AcquireRow();
                         int measured = row.Bind(item, chatFont, rowWidth);
                         measuredItems.Add(item);   // 真实渲染量过了，后续校正不必再重测
@@ -1216,6 +1254,7 @@ namespace ChatFlow
 
         private void Row_ThinkingToggled(ChatFlowItem item)
         {
+            if (item.Turn != null) thinkingTouched.Add((item.Turn, item.Phase));
             item.ToggleThinking();
             DataSource?.RaiseChanged(); // → TurnChanged → RebuildItems 全量重排
         }
@@ -1265,6 +1304,7 @@ namespace ChatFlow
         /// 表现是滚到底最后几行仍被裁；会话停止后用户点进聊天区或点「跳到末尾」时补这一刀。</summary>
         public void RemeasureLayout()
         {
+            if (suspendRendering) { renderDirty = true; return; }
             if (items.Count == 0 || inLayout) return;
             ClearHeights();
             UpdateScrollAndLayout();
@@ -1321,6 +1361,9 @@ namespace ChatFlow
             // 不落到数据上的话助手条目一直不存在，下面 item == null 的分支会每 250ms 整表重建一次
             // （用户侧：正文不显示、一拖滚动条就弹回、选区被清掉）。
             if (fullText != null) turn.AssistantText = fullText;
+
+            // 页面不在前台：数据照常更新（切回来要看到最新），渲染等恢复后再做
+            if (suspendRendering) { renderDirty = true; return; }
 
             // 长正文会被拆成多个分片：只有最后一片在视口底部，取第一片时它早已滚出屏幕，等于每拍都整表重建
             var item = items.LastOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
@@ -1821,12 +1864,15 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         private static string FormatDuration(long ms)
             => ms < 1000 ? $"{ms}ms" : $"{ms / 1000.0:0.0}s";
 
+        /// <summary>本次浏览里被强制折叠（向上回溯时新填出的历史行）：只影响显示，不改数据侧记录。</summary>
+        internal bool ForceThinkingCollapsed { get; set; }
+
         /// <summary>思考区是否展开（数据侧持有，跨重建保留；null=未交互按时间线有无决定：
         /// 有时间线（思维与工具交替）默认展开，否则看不到交错过程；纯推理仍折叠）。</summary>
         public bool ThinkingExpanded
-            => Phase >= 0
+            => !ForceThinkingCollapsed && (Phase >= 0
                 ? (Turn.PhaseExpanded.TryGetValue(Phase, out bool expanded) ? expanded : DefaultThinkingExpanded)
-                : Turn.ThinkingExpanded ?? DefaultThinkingExpanded;
+                : Turn.ThinkingExpanded ?? DefaultThinkingExpanded);
 
         /// <summary>没交互过的默认值：宿主的设置优先；没设时有时间线（思维与工具交替）就展开，纯推理仍折叠。</summary>
         private bool DefaultThinkingExpanded => Turn.ThinkingExpanded ?? !string.IsNullOrEmpty(Turn.TimelineText);
@@ -1834,9 +1880,12 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         /// <summary>切换思考区展开状态（重排由调用方触发）。</summary>
         public void ToggleThinking()
         {
+            // 先按用户看到的当前状态取反，再撤掉浏览期的强制折叠
+            bool expand = !ThinkingExpanded;
+            ForceThinkingCollapsed = false;
             // 每个折叠区各记各的：分段共用一个开关会让后面几段跟着一起开合
-            if (Phase >= 0) Turn.PhaseExpanded[Phase] = !ThinkingExpanded;
-            else Turn.ThinkingExpanded = !ThinkingExpanded;
+            if (Phase >= 0) Turn.PhaseExpanded[Phase] = expand;
+            else Turn.ThinkingExpanded = expand;
         }
     }
 }
