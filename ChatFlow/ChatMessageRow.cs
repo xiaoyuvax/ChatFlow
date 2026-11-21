@@ -1050,7 +1050,7 @@ namespace ChatFlow
                 return;
             }
 
-                        // 缺口在左上，箭头长在圆弧端头上（旧版三角形浮在圆环内部，看着像箭头在中间）。
+            // 缺口在左上，箭头长在圆弧端头上（旧版三角形浮在圆环内部，看着像箭头在中间）。
             // 260° 是 GDI+ 的起点角（0=三点钟方向、顺时针为正），箭头逆着扫向缺口。
             const float startDeg = 260f;
             g.DrawArc(pen, cx - 6 * k, cy - 6 * k, 12 * k, 12 * k, startDeg, 300);
@@ -1058,8 +1058,8 @@ namespace ChatFlow
             double rad = startDeg * Math.PI / 180.0;
             float sin = (float)Math.Sin(rad), cos = (float)Math.Cos(rad);
             float px = cx + 6f * k * cos, py = cy + 6f * k * sin;
-            float ux = sin, uy = -cos;   // tangent towards the gap (decreasing angle)
-            float nx = -uy, ny = ux;     // perpendicular to the arrow base
+            float ux = sin, uy = -cos;   // 端点切线：指向缺口（角度递减方向）
+            float nx = -uy, ny = ux;     // 箭头底边的法线
             using var brush = new SolidBrush(color);
             g.FillPolygon(brush,
             [
