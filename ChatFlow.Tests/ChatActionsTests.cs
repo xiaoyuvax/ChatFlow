@@ -47,5 +47,41 @@ namespace ChatFlow.Tests
                 host.Dispose();
             }
         }
+
+        [StaFact]
+        public void Hover_OnUserRow_ShowsPairEndActions()
+        {
+            using var host = new Form { Size = new Size(900, 600), StartPosition = FormStartPosition.Manual };
+            var flow = new ChatFlowControl { Dock = DockStyle.Fill };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var turn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "问题"),
+                    Assistant = new ChatMessage("assistant", "回答")
+                };
+                var book = new ChatTurnBook();
+                book.AddTurn(turn);
+                flow.UndoRequested += (_, _) => { };
+                flow.CopyRequested += (_, _) => { };
+                flow.Bind(book);
+                Application.DoEvents();
+
+                var userRow = flow.Controls.OfType<ChatMessageRow>().First(r => r.Item != null && r.Item.IsUser);
+                var answerRow = flow.Controls.OfType<ChatMessageRow>().First(r => r.Item != null && r.Item.IsPairEnd);
+                Assert.DoesNotContain(answerRow.Controls.OfType<ChatActionButton>(), b => b.Visible);
+
+                flow.HoverRow(userRow);
+
+                Assert.Contains(answerRow.Controls.OfType<ChatActionButton>(), b => b.Visible);
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
     }
 }

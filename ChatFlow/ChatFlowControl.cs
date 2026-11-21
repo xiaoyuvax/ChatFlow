@@ -25,6 +25,8 @@ namespace ChatFlow
         private readonly HashSet<ChatFlowItem> measuredItems = [];
 
         private readonly List<ChatMessageRow> rowPool = [];
+        /// <summary>当前显示操作按钮的行（悬停中的问答对末尾行；鼠标在用户行上也归到它）。</summary>
+        private ChatMessageRow actionRow;
         private readonly VScrollBar vbar = new();
         /// <summary>底部居中的「跳到末尾」浮动按钮（不在末尾时显示）。</summary>
         private readonly JumpToEndButton jumpToEndButton;
@@ -88,6 +90,37 @@ namespace ChatFlow
 
         internal ChatMessageRow RowOf(ChatFlowItem item)
             => item != null && realized.TryGetValue(item, out var row) ? row : null;
+
+        /// <summary>指针进入某行：显示它所在问答对末尾行的操作按钮（同一对的任意一行悬停都算）。
+        /// 末尾行可能不在已实例化范围（长回答滚到中段），此时什么也不显示。</summary>
+        internal void HoverRow(ChatMessageRow row)
+        {
+            var turn = row.Item?.Turn;
+            if (turn == null) return;
+            if (actionRow?.Item != null && ReferenceEquals(actionRow.Item.Turn, turn))
+            {
+                actionRow.ShowActions();
+                return;
+            }
+            actionRow?.HideActions();
+            actionRow = null;
+            foreach (var (item, candidate) in realized)
+            {
+                if (item.IsPairEnd && ReferenceEquals(item.Turn, turn))
+                {
+                    actionRow = candidate;
+                    break;
+                }
+            }
+            actionRow?.ShowActions();
+        }
+
+        /// <summary>指针离开某行：同一问答对的操作按钮延时收起（留出挪到按钮上的时间）。</summary>
+        internal void LeaveRow(ChatMessageRow row)
+        {
+            if (actionRow?.Item == null || !ReferenceEquals(actionRow.Item.Turn, row.Item?.Turn)) return;
+            actionRow.ScheduleHideActions();
+        }
 
         internal void ToggleSelectionMode()
         {
@@ -1240,6 +1273,7 @@ namespace ChatFlow
 
         private void ReleaseRow(ChatMessageRow row)
         {
+            if (ReferenceEquals(actionRow, row)) actionRow = null;
             if (realized.Remove(row.Item))
                 row.SelectionToggled -= Row_SelectionToggled;
             row.ThinkingToggled -= Row_ThinkingToggled;

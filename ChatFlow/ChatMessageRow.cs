@@ -20,8 +20,6 @@ namespace ChatFlow
         private const int FoldMarkerSize = 8;   // 折叠 + 标记边长（DIP）；FCTB 默认 8 物理像素，250% 下点不中
         private const int ActionSize = 24;      // 右下角操作按钮边长
         private const int ActionGap = 4;        // 两个按钮间距
-        private const int ActionZoneW = 132;    // 右下角悬停感应区宽
-        private const int ActionZoneH = 40;     // 右下角悬停感应区高
         /// <summary>markdown 模式下代码段的等宽字体（正文字体同字号）。</summary>
         internal static readonly string CodeFontFamily = "Consolas";
         private readonly CheckBox chk;
@@ -169,8 +167,11 @@ namespace ChatFlow
                 actionHide.Stop();
                 if (!PointerOnActions()) HideActions();
             };
+            HookActions(this);
             HookActions(txt);
             HookActions(txtThinking);
+            HookActions(lblRole);
+            HookActions(lblThinking);
             foreach (var button in new[] { btnUndo, btnCopy })
             {
                 button.MouseEnter += (_, _) => { actionHide.Stop(); ShowActions(); };
@@ -652,22 +653,12 @@ namespace ChatFlow
 
         private void HookActions(Control control)
         {
-            control.MouseEnter += (_, _) => UpdateActionZone(control, control.PointToClient(Cursor.Position));
-            control.MouseMove += (_, e) => UpdateActionZone(control, e.Location);
-            control.MouseLeave += (_, _) => ScheduleHideActions();
+            control.MouseEnter += (_, _) => owner.HoverRow(this);
+            control.MouseMove += (_, _) => owner.HoverRow(this);
+            control.MouseLeave += (_, _) => owner.LeaveRow(this);
         }
 
-        private void UpdateActionZone(Control control, Point point)
-        {
-            if (!canUndo && !canCopy) return;
-            var rowPoint = new Point(control.Left + point.X, control.Top + point.Y);
-            if (rowPoint.X >= Width - Dip(ActionZoneW) && rowPoint.Y >= Height - Dip(ActionZoneH))
-                ShowActions();
-            else
-                ScheduleHideActions();
-        }
-
-        private void ShowActions()
+        internal void ShowActions()
         {
             if (actionsShown || (!canUndo && !canCopy)) return;
             actionHide.Stop();
@@ -678,7 +669,7 @@ namespace ChatFlow
             btnCopy.BringToFront();
         }
 
-        private void HideActions()
+        internal void HideActions()
         {
             actionHide.Stop();
             actionsShown = false;
@@ -686,7 +677,7 @@ namespace ChatFlow
             btnCopy.Visible = false;
         }
 
-        private void ScheduleHideActions()
+        internal void ScheduleHideActions()
         {
             if (!actionsShown) return;
             actionHide.Stop();
