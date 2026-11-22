@@ -819,7 +819,8 @@ namespace ChatFlow
             // 估算偏太多会让「实测 ↔ 估算」切换时整屏跳位，所以字符宽/行高都要按 DPI 缩放，
             // 且换行符只切行、不再额外加一行（否则长段落按换行数翻倍，估算会比实测大一倍）。
             float scale = DeviceDpi / 96f;
-            int usable = Math.Max(40, RowTextWidth - 8);
+            // 用户消息的正文盒只占行宽一半（见 ChatMessageRow.UpdateBodyGeometry），估算行数按半宽算
+            int usable = Math.Max(40, item.IsUser ? RowTextWidth / 2 : RowTextWidth - 8);
             int charW = Math.Max(6, (int)Math.Round(chatFont.Size * 0.62f * scale));
             int perLine = Math.Max(10, usable / charW);
             int lineH = Math.Max(12, (int)Math.Round((chatFont.Size * 1.55f + 6) * scale));

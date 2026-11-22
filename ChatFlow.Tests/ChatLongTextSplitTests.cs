@@ -85,7 +85,7 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
-        public void ContinuationPiece_HidesRoleLabel_AndJoinsText()
+        public void ContinuationPiece_JoinsText_AndSkipsRoleRow()
         {
             var turn = new ChatTurn
             {
@@ -111,23 +111,14 @@ namespace ChatFlow.Tests
                 Assert.True(CheckBoxOf(first).Visible, "整轮勾选框挂第一片");
                 Assert.False(CheckBoxOf(next).Visible, "续片不单独出勾选框，避免只取消其中一段");
 
-                Assert.False(RoleLabel(next).Visible, "续片不该显示「AI（续）」之类的角色标签");
-                var role = RoleLabel(first);
-                Assert.True(role.AutoSize, "角色标签必须自适应宽度，否则更长的文案会被裁掉");
-                Assert.True(role.Width >= role.GetPreferredSize(Size.Empty).Width, "标签宽度容得下完整文案");
-                Assert.True(next.BodyBox.Top < first.BodyBox.Top, "续片正文应上移到角色标签行原来的位置");
-                Assert.True(nextH < firstH, "续片不再为角色标签行留高度");
+                Assert.True(next.BodyBox.Top < first.BodyBox.Top, "续片正文应上移到顶部留白行原来的位置");
+                Assert.True(nextH < firstH, "续片不再为顶部留白留高度");
             }
             finally
             {
                 host.Hide();
             }
         }
-
-        private static WF.Label RoleLabel(object row)
-            => (WF.Label)row.GetType()
-                .GetField("lblRole", BindingFlags.NonPublic | BindingFlags.Instance)!
-                .GetValue(row)!;
 
         private static WF.CheckBox CheckBoxOf(object row)
             => (WF.CheckBox)row.GetType()

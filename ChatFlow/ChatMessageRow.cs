@@ -8,11 +8,13 @@ using CDS.Markdown;
 namespace ChatFlow
 {
     /// <summary>
-    /// 单条聊天消息行：复选框 + 角色标签 + 只读 FCTB（高度=内容高度，无滚动条，滚轮转发给父 ChatFlowControl）。
+    /// 单条聊天消息行：复选框 + 只读 FCTB（高度=内容高度，无滚动条，滚轮转发给父 ChatFlowControl）。
+    /// 用户消息靠右、宽度封顶行宽一半（文字在盒内左对齐），助手消息贴左占满整行：
+    /// 角色靠左右位置区分，行内不再显示「用户 / AI」标注。
     /// </summary>
     public class ChatMessageRow : Panel
     {
-        public const int RoleIndent = 24;      // 角色标签行高度
+        public const int RoleIndent = 24;      // 每条消息的顶部留白（原「角色标注」行高；标注已取消）
         public const int TextRightSpace = 8;   // 文本右侧留白
         private const int RowVPad = 8;         // 行上下留白
         internal const int ThinkingHeaderH = 18; // 思考区折叠头高度（浮动顶替条也用它对齐）
@@ -23,7 +25,6 @@ namespace ChatFlow
         /// <summary>markdown 模式下代码段的等宽字体（正文字体同字号）。</summary>
         internal static readonly string CodeFontFamily = "Consolas";
         private readonly CheckBox chk;
-        private readonly Label lblRole;
         private readonly Label lblThinking;     // 思考区折叠/展开头（无思考区时隐藏）
         private readonly RowTextBox txt;         // 正文
         private readonly RowTextBox txtThinking; // 思考区（可折叠，展开时显示在正文上方）
@@ -73,6 +74,52 @@ namespace ChatFlow
             ? _contentWidth
             : Math.Max(Dip(20), Width - Dip(TextRightSpace));
 
+        /// <summary>用户消息正文盒的宽度上限 = 行宽 / 该值。</summary>
+        private const int UserBodyWidthRatio = 2;
+
+        private int _bodyWidth;                  // 正文盒宽度（用户消息封顶行宽一半）
+        private int _bodyLeft;                   // 正文盒左边界（用户消息靠右时 > 0）
+        // 用户消息最宽一行的像素宽度：Bind 时按正文字体量一次，之后行宽变化只重算上限，不再碰字体
+        //（宿主换 ChatFont 会销毁旧 Font，留着引用再测量就会抛）。
+        private int _naturalWidth;
+
+        /// <summary>
+        /// 正文盒几何：助手消息贴左占满可用宽度；用户消息靠右，宽度取「最宽一行 + 内边距」，
+        /// 但不超过行宽一半 —— 文字在盒内仍左对齐，角色靠左右位置区分。
+        /// </summary>
+        /// <param name="font">正文字体；null = 行宽变化后的重算，沿用 Bind 时量好的最宽行宽。</param>
+        private void UpdateBodyGeometry(ChatFlowItem item, Font font, int rowWidth)
+        {
+            bool isUser = item != null && item.IsUser;
+            if (font != null) _naturalWidth = isUser ? NaturalWidth(item.Text, font) : 0;
+            int fullWidth = Math.Max(Dip(20), rowWidth - Dip(TextRightSpace));
+            if (!isUser)
+            {
+                _bodyWidth = fullWidth;
+                _bodyLeft = 0;
+                return;
+            }
+            int cap = Math.Max(Dip(80), rowWidth / UserBodyWidthRatio);
+            int wanted = _naturalWidth + Dip(FoldGutterWidth) + Dip(TextRightSpace);
+            _bodyWidth = Math.Max(Dip(80), Math.Min(fullWidth, Math.Min(cap, wanted)));
+            _bodyLeft = Math.Max(0, fullWidth - _bodyWidth);
+        }
+
+        /// <summary>文本按单行排版时最宽一行的像素宽度（用户消息据此收紧正文盒，短消息不会撑到半屏）。</summary>
+        private static int NaturalWidth(string text, Font font)
+        {
+            if (string.IsNullOrEmpty(text) || font == null) return 0;
+            int widest = 0;
+            foreach (string line in text.Replace("\r\n", "\n").Split('\n'))
+            {
+                if (line.Length == 0) continue;
+                Size size = TextRenderer.MeasureText(line, font, new Size(int.MaxValue, int.MaxValue),
+                    TextFormatFlags.NoPadding | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+                widest = Math.Max(widest, size.Width);
+            }
+            return widest;
+        }
+
         private static ChatPalette P => ChatTheme.Current;   // null = 浅色（沿用原配色）
 
         public ChatMessageRow(ChatFlowControl owner)
@@ -91,16 +138,6 @@ namespace ChatFlow
             {
                 if (!_binding)
                     SelectionToggled?.Invoke(Item, chk.Checked);
-            };
-
-            lblRole = new Label
-            {
-                AutoSize = true,
-                Location = new Point(Dip(24), Dip(2)),
-                TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = Color.DimGray,
-                Font = new Font("Microsoft YaHei UI", 7.5F),
-                Text = "?",
             };
 
             txt = new RowTextBox
@@ -170,7 +207,6 @@ namespace ChatFlow
             HookActions(this);
             HookActions(txt);
             HookActions(txtThinking);
-            HookActions(lblRole);
             HookActions(lblThinking);
             foreach (var button in new[] { btnUndo, btnCopy })
             {
@@ -179,7 +215,6 @@ namespace ChatFlow
             }
 
             Controls.Add(chk);
-            Controls.Add(lblRole);
             Controls.Add(lblThinking);
             Controls.Add(txtThinking);
             Controls.Add(txt);
@@ -200,6 +235,7 @@ namespace ChatFlow
         {
             _binding = true;
             _contentWidth = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
+            UpdateBodyGeometry(item, font, reservedWidth);
             // 行表面与勾选框底色：主题切换只重绑（OnAppThemeChanged → Bind），不会重建控件，
             // 池化行上一次主题残留的底色（ChatTheme 对快照后新建的行无从还原）必须在这里重贴
             BackColor = Color.Transparent;
@@ -214,12 +250,7 @@ namespace ChatFlow
             Item = item;
             ContextMenuStrip = owner.ContextMenuStrip;
             chk.ContextMenuStrip = owner.ContextMenuStrip;
-            lblRole.ContextMenuStrip = owner.ContextMenuStrip;
             txt.ContextMenuStrip = owner.ContextMenuStrip;
-            lblRole.Text = item.IsUser ? "用户" : "AI";
-            // 超长正文的续片不显示角色标签：拆片只是绕高度上限，用户不该看见接缝
-            lblRole.Visible = !item.IsContinuation;
-            lblRole.ForeColor = P != null ? P.Accent : (item.IsUser ? Color.SteelBlue : Color.SeaGreen);
             bool useMarkdown =
 #if NET8_0_OR_GREATER
                 owner.MarkdownReady && ChatMarkdown.UseMarkdown(item.Text, item.Turn.Streaming);
@@ -228,12 +259,12 @@ namespace ChatFlow
 #endif
             // 提示词块整段缩进后再上样式（缩进只作用于显示文本，模型原文不动）
             string body = ChatTextStyler.IndentPromptBlocks(item.Text);
-            string bodyKey = (useMarkdown ? "md|" : "txt|") + font + "|" + _contentWidth + "|" + body;
+            string bodyKey = (useMarkdown ? "md|" : "txt|") + font + "|" + _bodyWidth + "|" + _bodyLeft + "|" + body;
             bool bodyChanged = bodyKey != _bodyKey;
             if (useMarkdown)
             {
 #if NET8_0_OR_GREATER
-                if (bodyChanged) BindMarkdownSegments(item.Text, font, reservedWidth);
+                if (bodyChanged) BindMarkdownSegments(item.Text, font, _bodyWidth);
 #endif
             }
             else
@@ -286,7 +317,7 @@ namespace ChatFlow
             // 真实测量：本行在最终宽度下换行后的内容高度（文本没变就沿用上次排版，别重算）
             if (!markdownMode)
             {
-                txt.Width = _contentWidth;
+                txt.Width = _bodyWidth;
                 if (bodyChanged)
                 {
                     _ = txt.Handle; // 强制创建句柄：FCTB 的 RecalcWordWrap 仅在 Created 时执行，否则换行被推迟
@@ -350,7 +381,7 @@ namespace ChatFlow
 #if NET8_0_OR_GREATER
         /// <summary>markdown 模式绑定：散文与围栏代码段按原文顺序各成一块，散文交给 MarkdownTextBox，
         /// 代码交给等宽 FCTB（按语言高亮）。块按索引池化复用，块类型变了才重建。</summary>
-        private void BindMarkdownSegments(string text, Font font, int reservedWidth)
+        private void BindMarkdownSegments(string text, Font font, int bodyWidth)
         {
             var segments = ChatMarkdown.SplitSegments(text);
             while (_blocks.Count > segments.Count) RemoveBlockAt(_blocks.Count - 1);
@@ -370,7 +401,7 @@ namespace ChatFlow
                     var box = block.Code;
                     box.BackColor = owner.BackColor;
                     box.Font = new Font(CodeFontFamily, font.Size, font.Style);
-                    box.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
+                    box.Width = Math.Max(Dip(20), bodyWidth);
                     _ = box.Handle; // 强制创建句柄：RecalcWordWrap 仅在 Created 时执行
                     var language = FastColoredTextBoxNS.Text.LanguageDetector.StringToLanguage(lang ?? "");
                     if (box.Language != language) box.Language = language; // setter 内部重建样式并整段重算
@@ -383,7 +414,7 @@ namespace ChatFlow
                     prose.BackColor = owner.BackColor;
                     prose.ForeColor = P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
                     prose.Font = new Font(font, font.Style);
-                    prose.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace) - Dip(FoldGutterWidth));
+                    prose.Width = Math.Max(Dip(20), bodyWidth - Dip(FoldGutterWidth));
                     _ = prose.Handle;
                     block.ProseSource = content;
                     prose.SetMarkdown(content);
@@ -751,7 +782,11 @@ namespace ChatFlow
         {
             base.OnSizeChanged(e);
             // 行宽变了：正文可用宽度随之更新，子控件与高度测量必须用同一个宽度
-            if (Width > 0) _contentWidth = Math.Max(Dip(20), Width - Dip(TextRightSpace));
+            if (Width > 0)
+            {
+                _contentWidth = Math.Max(Dip(20), Width - Dip(TextRightSpace));
+                UpdateBodyGeometry(Item, null, Width);   // 行宽变了：用户正文盒的半宽上限跟着变
+            }
             LayoutContent();
         }
 
@@ -761,8 +796,6 @@ namespace ChatFlow
         {
             chk.SetBounds(Dip(2), Dip(2), Dip(20), Dip(20));
             bool continuation = Item?.IsContinuation == true;
-            lblRole.Visible = !continuation;
-            if (!continuation) lblRole.Location = new Point(Dip(24), Dip(2));
 
             int y = (continuation ? 0 : Dip(RoleIndent)) + Dip(2);
             int contentW = ContentWidth;
@@ -789,9 +822,11 @@ namespace ChatFlow
                 txtThinking.SetBounds(0, y, contentW, th);
                 y += th + Dip(4);
             }
-            int bodyW = Math.Max(Dip(20), contentW);
+            // 正文盒：助手占满整行贴左；用户靠右、宽度封顶行宽一半（见 UpdateBodyGeometry）
+            int bodyW = Math.Max(Dip(20), Math.Min(contentW, _bodyWidth > 0 ? _bodyWidth : contentW));
+            int bodyX = Math.Max(0, Math.Min(_bodyLeft, contentW - bodyW));
             int bodyH = bodyShown ? Math.Max(Dip(20), Height - y - Dip(RowVPad) / 2) : 0;
-            txt.SetBounds(0, y, bodyW, bodyH);
+            txt.SetBounds(bodyX, y, bodyW, bodyH);
 #if NET8_0_OR_GREATER
             // markdown 模式下各块（散文 / 代码）按原文顺序纵向堆叠，各自高度=内容高度
             if (markdownMode)
@@ -812,7 +847,7 @@ namespace ChatFlow
                             block.Code.NeedRecalc(true, true);
                         }
                         h = BlockHeight(block);
-                        block.Code.SetBounds(0, stackY, bodyW, h);
+                        block.Code.SetBounds(bodyX, stackY, bodyW, h);
                     }
                     else
                     {
@@ -825,8 +860,8 @@ namespace ChatFlow
                                 block.Prose.SetMarkdown(block.ProseSource);
                         }
                         h = BlockHeight(block);
-                        block.Wrap.SetBounds(0, stackY, Dip(FoldGutterWidth), h);
-                        block.Prose.SetBounds(Dip(FoldGutterWidth), stackY, proseW, h);
+                        block.Wrap.SetBounds(bodyX, stackY, Dip(FoldGutterWidth), h);
+                        block.Prose.SetBounds(bodyX + Dip(FoldGutterWidth), stackY, proseW, h);
                         block.Wrap.BringToFront();
                     }
                     block.Box.BringToFront();
@@ -839,7 +874,8 @@ namespace ChatFlow
             int gap = Dip(ActionGap);
             int count = (canUndo ? 1 : 0) + (canCopy ? 1 : 0);
             int total = count * size + (count > 1 ? gap : 0);
-            int bx = Math.Max(0, contentW - total);
+            // 用户消息的正文靠右：按钮挪到正文盒左侧的空白处，免得压住文字
+            int bx = Math.Max(0, Item?.IsUser == true ? bodyX - total - gap : contentW - total);
             int by = Math.Max(0, Height - Dip(RowVPad) - size - Dip(2));
             if (canUndo)
             {
