@@ -385,6 +385,7 @@ namespace ChatFlow
                     prose.Font = new Font(font, font.Style);
                     prose.Width = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace) - Dip(FoldGutterWidth));
                     _ = prose.Handle;
+                    block.ProseSource = content;
                     prose.SetMarkdown(content);
                 }
             }
@@ -480,12 +481,29 @@ namespace ChatFlow
                 if (!block.Box.Visible) continue;
                 height += (block.IsCode
                     ? block.Code.TextHeight + block.Code.Paddings.Vertical
-                    : block.Prose.GetPreferredContentHeight()) + Dip(4);
+                    : ProseHeight(block.Prose)) + Dip(4);
             }
             return height;
 #else
             return 0;
 #endif
+        }
+
+        /// <summary>散文块的完整内容高度。CDS 的 GetPreferredContentHeight 按「最后一个字符的位置」量高，
+        /// 而字符位置带控件当前滚动偏移：点进正文拿到焦点后它会先把选区挪到末尾，RichEdit 随之滚到底，
+        /// 再量就少算一截，行高跟着收缩把正文裁成一行。这里补回滚动偏移并还原选区（视图跟着回到点击处）。</summary>
+        private static int ProseHeight(MarkdownRowTextBox prose)
+        {
+            if (prose.TextLength == 0) return 0;
+            int top = prose.GetPositionFromCharIndex(0).Y;
+            int start = prose.SelectionStart, length = prose.SelectionLength;
+            int height = prose.GetPreferredContentHeight();
+            if (start != prose.SelectionStart || length != prose.SelectionLength)
+            {
+                prose.SelectionStart = start;
+                prose.SelectionLength = length;
+            }
+            return top < 0 ? height - top : height;
         }
 
         private void ShowMarkdown(bool show)
@@ -775,15 +793,30 @@ namespace ChatFlow
                 foreach (var block in _blocks)
                 {
                     if (!block.Box.Visible) continue;
-                    int h = block.IsCode
-                        ? Math.Max(Dip(10), block.Code.TextHeight + block.Code.Paddings.Vertical + Dip(4))
-                        : Math.Max(Dip(10), block.Prose.GetPreferredContentHeight() + Dip(4));
+                    int h;
                     if (block.IsCode)
                     {
+                        // 先按最终宽度换行再量高：宽度变了还按旧宽度量，行高会少算、正文被裁
+                        if (block.Code.Width != bodyW)
+                        {
+                            block.Code.Width = bodyW;
+                            _ = block.Code.Handle;
+                            block.Code.NeedRecalc(true, true);
+                        }
+                        h = Math.Max(Dip(10), block.Code.TextHeight + block.Code.Paddings.Vertical + Dip(4));
                         block.Code.SetBounds(0, stackY, bodyW, h);
                     }
                     else
                     {
+                        // 宽度变了必须按新宽度重排再量：RichEdit 要等下一次重绘才换行，直接量到的是
+                        // 旧宽度的行数（偏少），盒高跟着变矮，正文被裁成最后一行/局部。
+                        if (block.Prose.Width != proseW)
+                        {
+                            block.Prose.Width = proseW;
+                            if (!string.IsNullOrEmpty(block.ProseSource))
+                                block.Prose.SetMarkdown(block.ProseSource);
+                        }
+                        h = Math.Max(Dip(10), ProseHeight(block.Prose) + Dip(4));
                         block.Wrap.SetBounds(0, stackY, Dip(FoldGutterWidth), h);
                         block.Prose.SetBounds(Dip(FoldGutterWidth), stackY, proseW, h);
                         block.Wrap.BringToFront();
@@ -821,6 +854,8 @@ namespace ChatFlow
             public RowTextBox Code;
             public MarkdownRowTextBox Prose;
             public Panel Wrap;
+            /// <summary>散文段的 markdown 原文：宽度变了要按新宽度重排（见 LayoutContent）。</summary>
+            public string ProseSource;
             public bool IsCode => Code != null;
             public Control Box => (Control)Code ?? Prose;
         }

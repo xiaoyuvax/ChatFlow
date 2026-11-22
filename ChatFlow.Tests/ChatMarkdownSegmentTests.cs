@@ -289,5 +289,44 @@ namespace ChatFlow.Tests
                 host.Dispose();
             }
         }
+
+        /// <summary>行宽变窄后必须按新宽度重排散文块再量高度：RichEdit 要等下一次重绘才换行，
+        /// 直接量到的是旧宽度的行数（偏少），盒高跟着变矮，正文被裁成最后一行/局部
+        /// （折叠再展开思考区触发整表重绑才恢复）。</summary>
+        [StaFact]
+        public void ResizeRow_WhenProseGetsNarrower_KeepsFullHeight()
+        {
+            using var flow = new ChatFlowControl();
+            using var host = new Form { Size = new Size(900, 700) };
+            using var row = new ChatMessageRow(flow);
+            host.Controls.Add(row);
+            host.Show();
+            try
+            {
+                var turn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "question"),
+                    Assistant = new ChatMessage("assistant", string.Join("\n\n", Enumerable.Range(0, 10)
+                        .Select(i => $"**Paragraph {i}**: this line is long enough to fill a wide row, "
+                            + "and the measured height stays well below the plain-text estimate.")))
+                };
+                var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
+                row.Height = row.Bind(item, flow.ChatFont, host.ClientSize.Width);
+                Application.DoEvents();
+                Assert.True(row.IsMarkdownRendered);
+                var prose = (MarkdownRowTextBox)row.MarkdownBox;
+
+                row.Width = 500;            // 只改宽度（等价于滚动条冒出来把行挤窄）
+                Application.DoEvents();
+
+                int need = prose.GetPreferredContentHeight();
+                Assert.True(prose.Height >= need, $"散文块高度没跟上宽度变化：{prose.Height} < {need}");
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
     }
 }

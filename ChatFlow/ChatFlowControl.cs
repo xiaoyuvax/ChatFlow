@@ -1032,6 +1032,9 @@ namespace ChatFlow
             {
                 lastLayoutWidth = layoutWidth;
                 ClearHeights();
+                // 宽度变了必须按新宽度重新绑定：只清高度再量的话，markdown 散文块仍按旧宽度排版
+                //（RichEdit 要等下一次重绘才换行），量出的高度只有几分之一，行高收缩后正文只剩最后一行。
+                foreach (var row in realized.Values.ToArray()) ReleaseRow(row);
                 RebuildSums();
                 UpdateScrollbar();
             }
@@ -1186,6 +1189,8 @@ namespace ChatFlow
                     {
                         // 高度被作废过（宽度/结构变化）就补测：只测还没用真实渲染量过的行。
                         // 放在第一轮而不是只在校正轮：否则这一屏的行永远停在粗估高度，底部正文被裁。
+                        // 宽度变了必须先按新宽度重排再量，否则量到的是旧宽度的换行高度。
+                        if (row.Width != rowWidth) row.Width = rowWidth;
                         int measured = row.Remeasure();
                         measuredItems.Add(item);
                         if (measured != cached)
