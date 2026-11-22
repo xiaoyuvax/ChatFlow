@@ -242,6 +242,42 @@ namespace ChatFlow.Tests
             }
         }
 
+        /// <summary>多块 markdown（散文/代码交替）的行高必须覆盖最后一块：测量与布局曾各算一遍块高，
+        /// 布局按「块高 + 块间 4」堆叠、测量只加一次 4，块越多行高越短（每块差 4），末尾正文被裁。</summary>
+        [StaFact]
+        public void ManyBlocks_RowHeightCoversLastBlock()
+        {
+            using var flow = new ChatFlowControl();
+            using var host = new Form { Size = new Size(900, 500) };
+            host.Controls.Add(flow);
+            flow.Dock = DockStyle.Fill;
+            host.Show();
+            try
+            {
+                string body = string.Join("\n\n", Enumerable.Range(0, 3).SelectMany(i => new[]
+                {
+                    $"第 {i} 段正文：" + new string('文', 60),
+                    "```\ncode " + i + "\n```"
+                })) + "\n\n最后一段正文，末尾不能被裁。";
+                var row = BindSingle(flow, body);
+                Assert.NotNull(row);
+                Assert.True(row.IsMarkdownRendered);
+
+                var field = typeof(ChatMessageRow).GetField("_blocks", BindingFlags.NonPublic | BindingFlags.Instance)!;
+                foreach (var block in (IEnumerable)field.GetValue(row)!)
+                {
+                    var box = (Control)block.GetType().GetProperty("Box")!.GetValue(block)!;
+                    Assert.True(box.Top + box.Height <= row.Height,
+                        $"markdown 块超出本行：top={box.Top} h={box.Height} rowH={row.Height}");
+                }
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
         /// <summary>流式期间是纯文本，收尾才转 markdown：渲染后行高会变高，滚动范围必须跟着更新，
         /// 否则拖到底仍有末尾正文被裁（用户实测的底部截断）。</summary>
         [StaFact]

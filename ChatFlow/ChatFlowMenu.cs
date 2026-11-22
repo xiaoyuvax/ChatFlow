@@ -39,6 +39,8 @@ namespace ChatFlow
             menu.Items.Add(Item("复制选择文本", () => CopyText(selected), hasSelection));
             // 「选择」不只是开勾选框：已打开时给出关闭入口，免得勾着却找不到退出口
             menu.Items.Add(Item(owner.ShowSelection ? "取消选择" : "选择", owner.ToggleSelectionMode));
+            // 长会话里展开的过程块要一屏一屏往下翻：给一个一次收完的入口（没有展开块时置灰）
+            menu.Items.Add(Item("折叠所有思维链区域", owner.CollapseAllThinking, owner.HasExpandedThinking));
             // 「操作」只在有勾选项时出现：勾选动作没有目标时列出来只会让人误点
             if (actions.Count > 0 && owner.HasCheckedTurns)
             {

@@ -46,10 +46,29 @@ namespace ChatFlow
         /// </summary>
         internal static int MaxChars { get; set; } = 3000;
 
-        /// <summary>这一段正文该走 markdown 渲染还是带样式的纯文本（流式中/过长/段太多都退回纯文本）。</summary>
+        /// <summary>工具行（执行中提示 " >> Tool[args]" / 旧格式 "» tool(args)"）。</summary>
+        private static readonly Regex ToolFlashLine = new(@"^[ \t]*(?:»|>>[ \t])", RegexOptions.Compiled);
+
+        /// <summary>整段正文只有工具行：这是「正在调用什么」的提示，不是正文。
+        /// 必须留在 FCTB 里按工具行染色——" >> " 会被 markdown 当块引用吞掉，排成灰底引用块且工具名不着色。</summary>
+        public static bool IsToolFlash(string text)
+        {
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            bool any = false;
+            foreach (string line in text.Replace("\r\n", "\n").Split('\n'))
+            {
+                if (string.IsNullOrWhiteSpace(line)) continue;
+                if (!ToolFlashLine.IsMatch(line)) return false;
+                any = true;
+            }
+            return any;
+        }
+
+        /// <summary>这一段正文该走 markdown 渲染还是带样式的纯文本（流式中/工具行提示/过长/段太多都退回纯文本）。</summary>
         public static bool UseMarkdown(string text, bool streaming)
         {
             if (streaming || string.IsNullOrEmpty(text) || text.Length > MaxChars) return false;
+            if (IsToolFlash(text)) return false;
             return IsMarkdown(text) && SplitSegments(text).Count <= MaxSegments;
         }
 

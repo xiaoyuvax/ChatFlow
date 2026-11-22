@@ -29,7 +29,9 @@ namespace ChatFlow
         private ChatMessageRow actionRow;
         private readonly VScrollBar vbar = new();
         /// <summary>底部居中的「跳到末尾」浮动按钮（不在末尾时显示）。</summary>
-        private readonly JumpToEndButton jumpToEndButton;
+        private readonly JumpButton jumpToEndButton;
+        /// <summary>右上角的「回到顶部」浮动按钮（滚离顶部时显示）。</summary>
+        private readonly JumpButton jumpToTopButton;
         /// <summary>顶部浮动的「思考与工具过程」折叠头替身：原折叠头被滚出可见区时顶替它，点一下即折叠。</summary>
         private readonly StickyThinkingBar stickyThinking = new();
         /// <summary>当前顶替的是哪一块（点击折叠用）。</summary>
@@ -294,10 +296,16 @@ namespace ChatFlow
             Controls.Add(vbar);
 
             // 「跳到末尾」浮动按钮：用户手动滚离末尾时出现（底部居中），点了回末尾并恢复自动跟随
-            jumpToEndButton = new JumpToEndButton { Visible = false };
+            jumpToEndButton = new JumpButton { Visible = false };
             jumpToEndButton.Click += (_, _) => JumpToEnd();
             Controls.Add(jumpToEndButton);
             jumpTip.SetToolTip(jumpToEndButton, "跳到末尾（回到最新内容并恢复自动跟随）");
+
+            // 右上角浮动的「回到顶部」按钮：滚离顶部时出现，点了回到第一条
+            jumpToTopButton = new JumpButton(up: true) { Visible = false };
+            jumpToTopButton.Click += (_, _) => ScrollToTop();
+            Controls.Add(jumpToTopButton);
+            jumpTip.SetToolTip(jumpToTopButton, "回到顶部");
 
             // 顶部浮动的折叠头替身：长过程滚到看不见原折叠头时，用它就地折叠
             stickyThinking.Click += (_, _) => CollapseStickyThinking();
@@ -375,6 +383,28 @@ namespace ChatFlow
             jumpToEndButton.BringToFront();
         }
 
+        /// <summary>按当前滚动位置显隐并定位「回到顶部」按钮（滚离顶部才显示）。</summary>
+        private void UpdateJumpToTopButton()
+        {
+            if (jumpToTopButton == null || IsDisposed) return;
+            bool show = vbar.Visible && vbar.Value > vbar.Minimum;
+            if (jumpToTopButton.Visible != show) jumpToTopButton.Visible = show;
+            if (show) LayoutJumpToTopButton();
+        }
+
+        /// <summary>「回到顶部」定位：右上角，躲开顶部的折叠头替身条。</summary>
+        private void LayoutJumpToTopButton()
+        {
+            if (jumpToTopButton == null || !jumpToTopButton.Visible) return;
+            int contentW = Math.Max(1, ClientSize.Width - (vbar.Visible ? vbar.Width : 0));
+            int x = Math.Max(0, contentW - jumpToTopButton.Width - Dip(10));
+            int y = stickyThinking != null && stickyThinking.Visible
+                ? stickyThinking.Bottom + Dip(4)
+                : Dip(4);
+            jumpToTopButton.Location = new Point(x, y);
+            jumpToTopButton.BringToFront();
+        }
+
         private int Dip(int value) => (int)Math.Round(value * DeviceDpi / 96.0);
 
         /// <summary>顶部折叠头替身：找出「折叠头已滚出视口、但这一块还盖着视口顶部」的最后一个展开块。
@@ -406,6 +436,7 @@ namespace ChatFlow
             if (stickyTarget == null)
             {
                 if (stickyThinking.Visible) stickyThinking.Visible = false;
+                UpdateJumpToTopButton();   // 替身条收起后顶部按钮回到最上面
                 return;
             }
 
@@ -419,6 +450,7 @@ namespace ChatFlow
             if (!stickyThinking.Visible) stickyThinking.Visible = true;
             stickyThinking.Invalidate();
             stickyThinking.BringToFront();
+            UpdateJumpToTopButton();   // 顶部按钮让开替身条
         }
 
         /// <summary>点替身条：折叠该块，并把视口滚回原折叠头处（折叠头贴住顶部），替身随即隐藏。</summary>
@@ -451,6 +483,7 @@ namespace ChatFlow
             }
             Relayout();
             jumpToEndButton?.Invalidate();
+            jumpToTopButton?.Invalidate();
             stickyThinking?.Invalidate();
         }
 
@@ -1020,6 +1053,7 @@ namespace ChatFlow
                 Invalidate();
                 return;
             }
+            if (!Visible) laidOutHidden = true;
 
             // 视口顶部的条目先记下来：行高从估算变实测（或反过来）会让前缀和整体变化，
             // 不把它钉住的话，用户拖到某个位置会被弹到别处（正是「滚到正文开头就弹回」）。
@@ -1336,6 +1370,22 @@ namespace ChatFlow
             else
                 Relayout();
             UpdateJumpToEndButton();
+            UpdateJumpToTopButton();
+        }
+
+        /// <summary>回到顶部：暂停自动跟随（用户在看历史），滚到第一条。</summary>
+        public void ScrollToTop()
+        {
+            autoScrollToEnd = false;
+            if (!vbar.Visible)
+            {
+                Relayout();
+                return;
+            }
+            SetScrollValueInternal(vbar.Minimum);
+            Relayout();
+            UpdateJumpToEndButton();
+            UpdateJumpToTopButton();
         }
 
         /// <summary>按真实渲染重测一遍可见行高并重排（跟随末尾时重排后仍停在末尾）。
@@ -1370,6 +1420,26 @@ namespace ChatFlow
             Relayout();
             UpdateJumpToEndButton();
         }
+        /// <summary>把这一轮最后一段正文的开头贴到视口顶部：长正文正常收尾时让用户从头读，
+        /// 而不是停在末尾（流式期间跟随到底，收尾后回一次头）。正文不足一屏时按 MaxScrollValue 钳制，
+        /// 自然落在末尾；跟随状态转为手动，浮动按钮换成「跳到末尾」。</summary>
+        public void ScrollToAnswerStart(ChatTurn turn)
+        {
+            if (turn == null) return;
+            var pieces = items.Where(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant).ToList();
+            if (pieces.Count == 0) return;
+            int phase = pieces[^1].Phase;   // 最后一段 = 最终答复；前面的段是中途说明
+            int idx = items.IndexOf(pieces.First(p => p.Phase == phase));
+            if (idx < 0) return;
+            if (!vbar.Visible) { Relayout(); return; }
+            autoScrollToEnd = false;
+            SetScrollValueInternal(Math.Min(prefixSum[idx], MaxScrollValue));
+            Relayout();   // 可见行重测后前面几行的高度可能变，按新值再对齐一次
+            SetScrollValueInternal(Math.Min(prefixSum[idx], MaxScrollValue));
+            UpdateJumpToEndButton();
+            UpdateJumpToTopButton();
+        }
+
         public void ScrollToTurn(int turnIndex)
         {
             if (DataSource == null || turnIndex < 0) return;
@@ -1509,6 +1579,24 @@ namespace ChatFlow
         /// <summary>取得回话在数据集中的索引。</summary>
         public int IndexOfTurn(ChatTurn turn) => DataSource?.Turns.ToList().IndexOf(turn) ?? -1;
 
+        /// <summary>是否还有展开着的思维链区域（右键「折叠所有」的可用条件）。</summary>
+        internal bool HasExpandedThinking
+            => items.Any(i => i.Kind == ChatFlowItemKind.Assistant && i.ThinkingText != null && i.ThinkingExpanded);
+
+        /// <summary>折叠所有思维链区域（含分段）：逐段记成用户收起，再整表重排。</summary>
+        internal void CollapseAllThinking()
+        {
+            bool changed = false;
+            foreach (var item in items)
+            {
+                if (item.Kind != ChatFlowItemKind.Assistant || item.ThinkingText == null || !item.ThinkingExpanded) continue;
+                if (item.Turn != null) thinkingTouched.Add((item.Turn, item.Phase));
+                item.ToggleThinking();
+                changed = true;
+            }
+            if (changed) DataSource?.RaiseChanged();
+        }
+
         /// <summary>诊断信息：每行 FCTB 需求高度 vs 实际分配高度（差值&gt;2 表示文本被裁剪）。</summary>
         public string GetLayoutDiagnostics()
         {
@@ -1577,6 +1665,19 @@ namespace ChatFlow
                 ReleaseRow(row);
             UpdateScrollAndLayout();
             LayoutJumpToEndButton();
+            LayoutJumpToTopButton();
+        }
+
+        /// <summary>隐藏时排过版：隐藏状态下 RichEdit 不排版，markdown 散文块量到的只有几十像素，
+        /// 后台标签页里收尾的正文就按这个偏小高度落盘，切回来不重测就只剩开头一段、滚到底也看不到末尾。</summary>
+        private bool laidOutHidden;
+
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            if (!Visible || !laidOutHidden) return;
+            laidOutHidden = false;
+            RemeasureLayout();
         }
 
         /// <summary>
@@ -1626,15 +1727,17 @@ namespace ChatFlow
         }
 
         /// <summary>
-        /// 「跳到末尾」浮动按钮：圆形底 + 向下箭头（复用 arrow_up_color_16xLG 旋转 180°）。
+        /// 「跳到末尾 / 回到顶部」浮动按钮：圆形底 + 上下箭头（方向由 up 决定）。
         /// 用圆形 Region 裁掉方形边角 —— 深/浅底上都不会出现难看的透明方块边；配色取当前调色板。
         /// </summary>
-        private sealed class JumpToEndButton : Control
+        private sealed class JumpButton : Control
         {
             private bool hover;
+            private readonly bool up;
 
-            public JumpToEndButton()
+            public JumpButton(bool up = false)
             {
+                this.up = up;
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
                     | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor, true);
                 Size = new Size(36, 36);
@@ -1687,16 +1790,17 @@ namespace ChatFlow
                 using (var br = new SolidBrush(fill)) g.FillEllipse(br, 0, 0, Width - 1, Height - 1);
                 using (var pen = new Pen(border)) g.DrawEllipse(pen, 0, 0, Width - 1, Height - 1);
 
-                                float cx = Width / 2f, cy = Height / 2f;
+                float cx = Width / 2f, cy = Height / 2f;
                 using (var pen = new Pen(p?.Fore ?? Color.DimGray, Math.Max(1f, S(2) * 0.8f)))
                 {
                     pen.StartCap = System.Drawing.Drawing2D.LineCap.Round;
                     pen.EndCap = System.Drawing.Drawing2D.LineCap.Round;
+                    float dy = up ? S(3) : -S(3);
                     g.DrawLines(pen, new[]
                     {
-                        new PointF(cx - S(4), cy - S(3)),
-                        new PointF(cx, cy + S(2)),
-                        new PointF(cx + S(4), cy - S(3))
+                        new PointF(cx - S(4), cy + dy),
+                        new PointF(cx, cy - dy),
+                        new PointF(cx + S(4), cy + dy)
                     });
                 }
             }

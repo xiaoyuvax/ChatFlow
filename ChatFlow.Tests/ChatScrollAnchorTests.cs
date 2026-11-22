@@ -359,6 +359,97 @@ namespace ChatFlow.Tests
             }
         }
 
+        /// <summary>
+        /// 长正文正常收尾：视口回到本轮正文开头（而不是停在末尾），用户能从头读；
+        /// 正文不足一屏时没有可读的开头可言，按上限钳制后仍停在末尾。
+        /// </summary>
+        [StaFact]
+        public void AnswerStart_LongTurn_ShowsBodyHeadAndStopsFollowing()
+        {
+            using var flow = new ChatFlowControl
+            {
+                Size = new System.Drawing.Size(900, 600),
+                ChatFont = new System.Drawing.Font("Microsoft YaHei UI", 9F)
+            };
+            using var host = new WF.Form { Size = new System.Drawing.Size(940, 660) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var book = new ChatTurnBook();
+                for (int i = 0; i < 3; i++)
+                    book.AddTurn(new ChatTurn
+                    {
+                        User = new ChatMessage("user", "问题 " + i),
+                        Assistant = new ChatMessage("assistant", Body(6))
+                    });
+                var longTurn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "长回答"),
+                    Assistant = new ChatMessage("assistant", LongBody())
+                };
+                book.AddTurn(longTurn);
+                flow.Bind(book);
+                Pump(600);
+                Assert.True(flow.AtEnd, "测试前提：绑定后跟在末尾");
+
+                flow.ScrollToAnswerStart(longTurn);
+                Pump(400);
+
+                var top = TopRow(flow);
+                Assert.NotNull(top);
+                Assert.Same(longTurn, top.Item.Turn);
+                Assert.Equal(ChatFlowItemKind.Assistant, top.Item.Kind);
+                Assert.False(flow.AtEnd, "正文开头已对齐视口顶部，不该还在末尾");
+                Assert.True(((WF.Control)Field(flow, "jumpToEndButton")).Visible, "离开末尾后应显示「跳到末尾」");
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        [StaFact]
+        public void AnswerStart_ShortTurn_StaysAtEnd()
+        {
+            using var flow = new ChatFlowControl
+            {
+                Size = new System.Drawing.Size(900, 600),
+                ChatFont = new System.Drawing.Font("Microsoft YaHei UI", 9F)
+            };
+            using var host = new WF.Form { Size = new System.Drawing.Size(940, 660) };
+            host.Controls.Add(flow);
+            host.Show();
+            try
+            {
+                var book = new ChatTurnBook();
+                for (int i = 0; i < 3; i++)
+                    book.AddTurn(new ChatTurn
+                    {
+                        User = new ChatMessage("user", "问题 " + i),
+                        Assistant = new ChatMessage("assistant", Body(6))
+                    });
+                var shortTurn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "短回答"),
+                    Assistant = new ChatMessage("assistant", Body(2))
+                };
+                book.AddTurn(shortTurn);
+                flow.Bind(book);
+                Pump(600);
+                Assert.True(flow.AtEnd);
+
+                flow.ScrollToAnswerStart(shortTurn);
+                Pump(300);
+
+                Assert.True(flow.AtEnd, "正文不足一屏时没有可读的开头，应留在末尾");
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
         private static int TopItemIndex(ChatFlowControl flow)
         {
             var items = (IList)Field(flow, "items");

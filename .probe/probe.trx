@@ -1,0 +1,111 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="b52e4365-61bd-4a21-8aba-42cea43cdbf5" name="Xiaoyu@XY 2026-11-22 12:56:43" runUser="XY\Xiaoyu" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-11-22T12:56:43.5415063+08:00" queuing="2026-11-22T12:56:43.5415071+08:00" start="2026-11-22T12:56:39.8053235+08:00" finish="2026-11-22T12:56:45.6140659+08:00" />
+  <TestSettings name="default" id="8b12c198-ee42-4a25-854d-6bd40dd7d9f8">
+    <Deployment runDeploymentRoot="Xiaoyu_XY_2026-11-22_12_56_43" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="a4982bce-bd7a-43d5-9161-9454fee3c9c9" testId="4faddace-7da6-d8a9-e809-56cad1846b2d" testName="ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(width: 700)" computerName="XY" duration="00:00:01.2193531" startTime="2026-11-22T12:56:44.6236120+08:00" endTime="2026-11-22T12:56:44.6236123+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a4982bce-bd7a-43d5-9161-9454fee3c9c9">
+      <Output>
+        <ErrorInfo>
+          <Message>文本被丢掉：见下）。
+
+2. OpenAI 的 arguments 仍然是 JSON 字符串</Message>
+          <StackTrace>   at ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(Int32 width) in D:\PUB\OpenLoop\src\ChatFlow\ChatFlow.Tests\MarkdownTailProbe.cs:line 85&#xD;
+   at InvokeStub_MarkdownTailProbe.TailIsNotClipped(Object, Span`1)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="63c3e79c-9776-4c0e-89c6-6de2adc13d12" testId="26aa2694-60a0-f83d-5924-1b109183d69f" testName="ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(width: 420)" computerName="XY" duration="00:00:02.4816073" startTime="2026-11-22T12:56:43.4169948+08:00" endTime="2026-11-22T12:56:43.4170712+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="63c3e79c-9776-4c0e-89c6-6de2adc13d12">
+      <Output>
+        <ErrorInfo>
+          <Message>文本被丢掉：见下）。
+
+2. OpenAI 的 arguments 仍然是 JSON 字符串</Message>
+          <StackTrace>   at ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(Int32 width) in D:\PUB\OpenLoop\src\ChatFlow\ChatFlow.Tests\MarkdownTailProbe.cs:line 85&#xD;
+   at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="a447be3f-8a01-41e9-81a8-aef4b8025bb9" testId="b23ee4aa-e9ad-cee9-8f02-b67d4b57cdf3" testName="ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(width: 1200)" computerName="XY" duration="00:00:00.8585701" startTime="2026-11-22T12:56:45.4826415+08:00" endTime="2026-11-22T12:56:45.4826422+08:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="a447be3f-8a01-41e9-81a8-aef4b8025bb9">
+      <Output>
+        <ErrorInfo>
+          <Message>文本被丢掉：见下）。
+
+2. OpenAI 的 arguments 仍然是 JSON 字符串</Message>
+          <StackTrace>   at ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(Int32 width) in D:\PUB\OpenLoop\src\ChatFlow\ChatFlow.Tests\MarkdownTailProbe.cs:line 85&#xD;
+   at InvokeStub_MarkdownTailProbe.TailIsNotClipped(Object, Span`1)&#xD;
+   at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(width: 420)" storage="d:\pub\openloop\src\chatflow\chatflow.tests\bin\debug\net10.0-windows\chatflow.tests.dll" id="26aa2694-60a0-f83d-5924-1b109183d69f">
+      <Execution id="63c3e79c-9776-4c0e-89c6-6de2adc13d12" />
+      <TestMethod codeBase="D:\PUB\OpenLoop\src\ChatFlow\ChatFlow.Tests\bin\Debug\net10.0-windows\ChatFlow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ChatFlow.Tests.MarkdownTailProbe" name="TailIsNotClipped" />
+    </UnitTest>
+    <UnitTest name="ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(width: 1200)" storage="d:\pub\openloop\src\chatflow\chatflow.tests\bin\debug\net10.0-windows\chatflow.tests.dll" id="b23ee4aa-e9ad-cee9-8f02-b67d4b57cdf3">
+      <Execution id="a447be3f-8a01-41e9-81a8-aef4b8025bb9" />
+      <TestMethod codeBase="D:\PUB\OpenLoop\src\ChatFlow\ChatFlow.Tests\bin\Debug\net10.0-windows\ChatFlow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ChatFlow.Tests.MarkdownTailProbe" name="TailIsNotClipped" />
+    </UnitTest>
+    <UnitTest name="ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(width: 700)" storage="d:\pub\openloop\src\chatflow\chatflow.tests\bin\debug\net10.0-windows\chatflow.tests.dll" id="4faddace-7da6-d8a9-e809-56cad1846b2d">
+      <Execution id="a4982bce-bd7a-43d5-9161-9454fee3c9c9" />
+      <TestMethod codeBase="D:\PUB\OpenLoop\src\ChatFlow\ChatFlow.Tests\bin\Debug\net10.0-windows\ChatFlow.Tests.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="ChatFlow.Tests.MarkdownTailProbe" name="TailIsNotClipped" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="4faddace-7da6-d8a9-e809-56cad1846b2d" executionId="a4982bce-bd7a-43d5-9161-9454fee3c9c9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="26aa2694-60a0-f83d-5924-1b109183d69f" executionId="63c3e79c-9776-4c0e-89c6-6de2adc13d12" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b23ee4aa-e9ad-cee9-8f02-b67d4b57cdf3" executionId="a447be3f-8a01-41e9-81a8-aef4b8025bb9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="列表中未列出的结果" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="所有已加载的结果" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="3" executed="3" passed="0" failed="3" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.8.2+699d445a1a (64-bit .NET 10.0.15)&#xD;
+[xUnit.net 00:00:00.15]   Discovering: ChatFlow.Tests&#xD;
+[xUnit.net 00:00:00.25]   Discovered:  ChatFlow.Tests&#xD;
+[xUnit.net 00:00:00.26]   Starting:    ChatFlow.Tests&#xD;
+[xUnit.net 00:00:02.85]       文本被丢掉：见下）。
+
+2. OpenAI 的 arguments 仍然是 JSON 字符串&#xD;
+[xUnit.net 00:00:02.85]       Stack Trace:&#xD;
+[xUnit.net 00:00:02.85]         D:\PUB\OpenLoop\src\ChatFlow\ChatFlow.Tests\MarkdownTailProbe.cs(85,0): at ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(Int32 width)&#xD;
+[xUnit.net 00:00:02.85]            at System.Reflection.MethodBaseInvoker.InterpretedInvoke_Method(Object obj, IntPtr* args)&#xD;
+[xUnit.net 00:00:02.85]            at System.Reflection.MethodBaseInvoker.InvokeDirectByRefWithFewArgs(Object obj, Span`1 copyOfArgs, BindingFlags invokeAttr)&#xD;
+[xUnit.net 00:00:04.06]       文本被丢掉：见下）。
+
+2. OpenAI 的 arguments 仍然是 JSON 字符串&#xD;
+[xUnit.net 00:00:04.06]       Stack Trace:&#xD;
+[xUnit.net 00:00:04.06]         D:\PUB\OpenLoop\src\ChatFlow\ChatFlow.Tests\MarkdownTailProbe.cs(85,0): at ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(Int32 width)&#xD;
+[xUnit.net 00:00:04.06]            at InvokeStub_MarkdownTailProbe.TailIsNotClipped(Object, Span`1)&#xD;
+[xUnit.net 00:00:04.06]            at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)&#xD;
+[xUnit.net 00:00:04.92]       文本被丢掉：见下）。
+
+2. OpenAI 的 arguments 仍然是 JSON 字符串&#xD;
+[xUnit.net 00:00:04.92]       Stack Trace:&#xD;
+[xUnit.net 00:00:04.92]         D:\PUB\OpenLoop\src\ChatFlow\ChatFlow.Tests\MarkdownTailProbe.cs(85,0): at ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(Int32 width)&#xD;
+[xUnit.net 00:00:04.92]            at InvokeStub_MarkdownTailProbe.TailIsNotClipped(Object, Span`1)&#xD;
+[xUnit.net 00:00:04.92]            at System.Reflection.MethodBaseInvoker.InvokeWithOneArg(Object obj, BindingFlags invokeAttr, Binder binder, Object[] parameters, CultureInfo culture)&#xD;
+[xUnit.net 00:00:04.93]   Finished:    ChatFlow.Tests&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="XY" outcome="Error" timestamp="2026-11-22T12:56:43.4090043+08:00">
+        <Text>[xUnit.net 00:00:02.84]     ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(width: 420) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="XY" outcome="Error" timestamp="2026-11-22T12:56:44.6229570+08:00">
+        <Text>[xUnit.net 00:00:04.06]     ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(width: 700) [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="XY" outcome="Error" timestamp="2026-11-22T12:56:45.4825900+08:00">
+        <Text>[xUnit.net 00:00:04.92]     ChatFlow.Tests.MarkdownTailProbe.TailIsNotClipped(width: 1200) [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

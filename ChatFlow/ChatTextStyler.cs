@@ -246,6 +246,9 @@ namespace ChatFlow
                 // 工具行（">> Tool[args]"）以 &gt;&gt; 开头会被 markdown 块引用识别（(? {0,3}>)+ 把 >> 当引号吞掉），
                 // MarkdownBlockStyle 会整行铺灰底；工具行是执行提示不是 markdown 块，清掉块级样式。
                 ClearToolLineBlockStyles(box, text);
+                // 工具行按工具样式染色（与思考区同一套规则：工具名与方括号着色，前缀/参数/耗时保持正文色）
+                range.SetStyle(ToolCallStyle, ToolCallRegex);
+                ApplySpanStyles(box, ToolCallStyle, CollectToolMarkSpans(text));
                 range.SetStyle(CodeBlockStyle, FenceRegex);
                 ApplyCodeBlockFolding(box, text);
                 ApplyBraceBlockFolding(box, text); // 无围栏的多行 JSON（正文里也可能出现）

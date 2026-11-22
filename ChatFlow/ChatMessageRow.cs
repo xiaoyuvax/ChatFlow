@@ -479,15 +479,22 @@ namespace ChatFlow
             foreach (var block in _blocks)
             {
                 if (!block.Box.Visible) continue;
-                height += (block.IsCode
-                    ? block.Code.TextHeight + block.Code.Paddings.Vertical
-                    : ProseHeight(block.Prose)) + Dip(4);
+                height += BlockHeight(block) + Dip(4);
             }
             return height;
 #else
             return 0;
 #endif
         }
+
+#if NET8_0_OR_GREATER
+        /// <summary>markdown 块的内容高度（含块内底部留白）。测量（MarkdownContentHeight）与布局（LayoutContent）
+        /// 必须共用这一个出口：两处各算一遍时，布局按「块高 + 块间 4」堆叠、测量只加一次 4，
+        /// 行高就短 4×(块数-1)，散文/代码交替的多块正文末尾会被裁掉一两行。</summary>
+        private int BlockHeight(MarkdownBlock block)
+            => Math.Max(Dip(10), block.IsCode
+                ? block.Code.TextHeight + block.Code.Paddings.Vertical + Dip(4)
+                : ProseHeight(block.Prose) + Dip(4));
 
         /// <summary>散文块的完整内容高度。CDS 的 GetPreferredContentHeight 按「最后一个字符的位置」量高，
         /// 而字符位置带控件当前滚动偏移：点进正文拿到焦点后它会先把选区挪到末尾，RichEdit 随之滚到底，
@@ -505,6 +512,7 @@ namespace ChatFlow
             }
             return top < 0 ? height - top : height;
         }
+#endif
 
         private void ShowMarkdown(bool show)
         {
@@ -803,7 +811,7 @@ namespace ChatFlow
                             _ = block.Code.Handle;
                             block.Code.NeedRecalc(true, true);
                         }
-                        h = Math.Max(Dip(10), block.Code.TextHeight + block.Code.Paddings.Vertical + Dip(4));
+                        h = BlockHeight(block);
                         block.Code.SetBounds(0, stackY, bodyW, h);
                     }
                     else
@@ -816,7 +824,7 @@ namespace ChatFlow
                             if (!string.IsNullOrEmpty(block.ProseSource))
                                 block.Prose.SetMarkdown(block.ProseSource);
                         }
-                        h = Math.Max(Dip(10), ProseHeight(block.Prose) + Dip(4));
+                        h = BlockHeight(block);
                         block.Wrap.SetBounds(0, stackY, Dip(FoldGutterWidth), h);
                         block.Prose.SetBounds(Dip(FoldGutterWidth), stackY, proseW, h);
                         block.Wrap.BringToFront();
