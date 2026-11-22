@@ -1744,7 +1744,7 @@ namespace ChatFlow
                 Cursor = Cursors.Hand;
                 TabStop = false;
                 BackColor = Color.Transparent;
-                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size), 1));
+                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size), 2));
             }
 
             private int S(int value) => (int)Math.Round(value * DeviceDpi / 96f);
@@ -1753,18 +1753,18 @@ namespace ChatFlow
             {
                 base.OnHandleCreated(e);
                 Size = new Size(S(36), S(36));
-                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size), 1));
+                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size), 2));
             }
 
             protected override void OnSizeChanged(EventArgs e)
             {
                 base.OnSizeChanged(e);
-                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size), 1));
+                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size), 2));
             }
 
             /// <summary>圆形路径：r 外扩 inflate 像素。Region 是 GDI 硬裁剪、无抗锯齿，
-            /// 按控件原尺寸裁会把 OnPaint 渐变出的边缘像素切掉留下锯齿阶梯；
-            /// 外扩一圈让半透明渐变边完整落在裁剪区内。</summary>
+            /// 按控件原尺寸裁会把 OnPaint 抗锯齿渐变出的边缘像素切掉留下锯齿阶梯；
+            /// 外扩一圈（AA 尾约 1.5px，取 2 保险）让渐变边完整落在裁剪区内。</summary>
             private static System.Drawing.Drawing2D.GraphicsPath CirclePath(Rectangle r, int inflate = 0)
             {
                 var path = new System.Drawing.Drawing2D.GraphicsPath();
@@ -1790,11 +1790,11 @@ namespace ChatFlow
                 Color border = p?.Border ?? Color.Gray;
                 var g = e.Graphics;
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                // 描边路径内缩半像素：笔宽 1 的描边恰好落在整数像素网格内，抗锯齿渐变完整不被 Region 裁掉
-                // （PixelOffsetMode.HighQuality 会再偏半像素，与这里的显式内缩叠加反而错位，故不用）
-                float pad = 0.5f;
-                using (var br = new SolidBrush(fill)) g.FillEllipse(br, -pad, -pad, Width + pad * 2, Height + pad * 2);
-                using (var pen = new Pen(border)) g.DrawEllipse(pen, pad, pad, Width - 1 - pad * 2, Height - 1 - pad * 2);
+                // 描边随 DPI 缩放并以内缩 stroke/2 的路径为中心线：描边恰好盖住轮廓边缘，
+                // 圆的剪影由描边定义（发丝线在高 DPI 下读不出圆形）；抗锯齿渐变完整落在 Region 内
+                float stroke = Math.Max(1f, S(1));
+                using (var br = new SolidBrush(fill)) g.FillEllipse(br, 0f, 0f, Width, Height);
+                using (var pen = new Pen(border, stroke)) g.DrawEllipse(pen, stroke / 2, stroke / 2, Width - stroke, Height - stroke);
 
                 float cx = Width / 2f, cy = Height / 2f;
                 using (var pen = new Pen(p?.Fore ?? Color.DimGray, Math.Max(1f, S(2) * 0.8f)))
