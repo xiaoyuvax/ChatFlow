@@ -250,7 +250,7 @@ namespace ChatFlow
             // 每次绑到 markdown 都补一次重测：池化行复用时上一行的排版状态不算数，
             // 而 SetMarkdown 的换行往往晚于本次测量，行高停在偏小值就会把末尾正文裁掉。
             if (useMarkdown) owner.RequestRelayoutDeferred(this);
-            bodyShown = !string.IsNullOrEmpty(item.Text);
+            bodyShown = !string.IsNullOrEmpty(item.Text) || item.ReserveBody;
             chk.Checked = item.Turn.Selected;
             // 勾选按整轮生效、由第一片代表：续片不单独出勾选框，免得只取消其中一段
             chk.Visible = _showSelection && !item.IsContinuation;

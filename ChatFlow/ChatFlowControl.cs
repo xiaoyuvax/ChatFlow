@@ -1744,7 +1744,7 @@ namespace ChatFlow
                 Cursor = Cursors.Hand;
                 TabStop = false;
                 BackColor = Color.Transparent;
-                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size)));
+                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size), 1));
             }
 
             private int S(int value) => (int)Math.Round(value * DeviceDpi / 96f);
@@ -1753,19 +1753,22 @@ namespace ChatFlow
             {
                 base.OnHandleCreated(e);
                 Size = new Size(S(36), S(36));
-                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size)));
+                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size), 1));
             }
 
             protected override void OnSizeChanged(EventArgs e)
             {
                 base.OnSizeChanged(e);
-                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size)));
+                Region = new Region(CirclePath(new Rectangle(Point.Empty, Size), 1));
             }
 
-            private static System.Drawing.Drawing2D.GraphicsPath CirclePath(Rectangle r)
+            /// <summary>圆形路径：r 外扩 inflate 像素。Region 是 GDI 硬裁剪、无抗锯齿，
+            /// 按控件原尺寸裁会把 OnPaint 渐变出的边缘像素切掉留下锯齿阶梯；
+            /// 外扩一圈让半透明渐变边完整落在裁剪区内。</summary>
+            private static System.Drawing.Drawing2D.GraphicsPath CirclePath(Rectangle r, int inflate = 0)
             {
                 var path = new System.Drawing.Drawing2D.GraphicsPath();
-                path.AddEllipse(r);
+                path.AddEllipse(r.X - inflate, r.Y - inflate, r.Width + inflate * 2, r.Height + inflate * 2);
                 return path;
             }
 
@@ -1787,8 +1790,11 @@ namespace ChatFlow
                 Color border = p?.Border ?? Color.Gray;
                 var g = e.Graphics;
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                using (var br = new SolidBrush(fill)) g.FillEllipse(br, 0, 0, Width - 1, Height - 1);
-                using (var pen = new Pen(border)) g.DrawEllipse(pen, 0, 0, Width - 1, Height - 1);
+                // 描边路径内缩半像素：笔宽 1 的描边恰好落在整数像素网格内，抗锯齿渐变完整不被 Region 裁掉
+                // （PixelOffsetMode.HighQuality 会再偏半像素，与这里的显式内缩叠加反而错位，故不用）
+                float pad = 0.5f;
+                using (var br = new SolidBrush(fill)) g.FillEllipse(br, -pad, -pad, Width + pad * 2, Height + pad * 2);
+                using (var pen = new Pen(border)) g.DrawEllipse(pen, pad, pad, Width - 1 - pad * 2, Height - 1 - pad * 2);
 
                 float cx = Width / 2f, cy = Height / 2f;
                 using (var pen = new Pen(p?.Fore ?? Color.DimGray, Math.Max(1f, S(2) * 0.8f)))
@@ -1949,6 +1955,14 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
                 return Turn.AssistantText;
             }
         }
+
+        /// <summary>正文为空、但工具行已经闪过的流式回合：正文 FCTB 保留一行高度不回落，
+        /// 下一次工具行直接复用同一块，末尾内容不会随闪现反复上下跳。</summary>
+        internal bool ReserveBody
+            => Kind == ChatFlowItemKind.Assistant && Turn.Streaming
+               && (Phase < 0 || Phase == Turn.Phases.Count - 1)
+               && Text.Length == 0
+               && (Turn.ToolStatusText != null || Turn.ToolStepCount > 0);
 
         /// <summary>思考区内容（仅助手条目有；用户条目返回 null）。有时间线时整段原样进 FCTB，不做 markdown 渲染。</summary>
         public string ThinkingText

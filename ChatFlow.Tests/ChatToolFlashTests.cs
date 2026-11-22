@@ -99,6 +99,60 @@ namespace ChatFlow.Tests
             }
         }
 
+        /// <summary>工具收尾后正文还没出字：正文 FCTB 不隐藏、保持原位（行高与闪现时一致），
+        /// 下一批工具行直接复用同一块，末尾内容不会随闪现反复上下跳。</summary>
+        [StaFact]
+        public void FlashSlot_StaysInPlace_AfterToolFinishes()
+        {
+            using var flow = new ChatFlowControl();
+            using var host = new Form { Size = new Size(900, 500) };
+            host.Controls.Add(flow);
+            flow.Dock = DockStyle.Fill;
+            host.Show();
+            try
+            {
+                var book = new ChatTurnBook();
+                var turn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "问题"),
+                    Assistant = new ChatMessage("assistant", ""),
+                    Streaming = true
+                };
+                book.AddTurn(turn);
+                flow.Bind(book);
+                Application.DoEvents();
+
+                turn.ToolStarted(" >> Read[path=a.cs]");
+                flow.UpdateStreamingMessage(turn, "", force: true);
+                Application.DoEvents();
+
+                var row = AssistantRow(flow);
+                Assert.NotNull(row);
+                int flashHeight = row.Height;
+                Assert.True(row.BodyBox.Height > 0, "闪现时正文 FCTB 应占位");
+
+                // 工具收尾、正文还没出字：位置保留，不回落成 0
+                turn.ToolsFinished();
+                turn.ToolStepCount = 1;
+                flow.UpdateStreamingMessage(turn, "", force: true);
+                Application.DoEvents();
+                Assert.True(row.BodyBox.Height > 0, "闪现结束后正文 FCTB 不该隐藏");
+                Assert.Equal("", row.BodyBox.Text);
+                Assert.Equal(flashHeight, row.Height);
+
+                // 下一批工具行复用同一块：仍在原位
+                turn.ToolStarted(" >> Grep[pattern=x]");
+                flow.UpdateStreamingMessage(turn, "", force: true);
+                Application.DoEvents();
+                Assert.Equal(flashHeight, row.Height);
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
         [Fact]
         public void UseMarkdown_RejectsToolFlashOnlyText()
         {
