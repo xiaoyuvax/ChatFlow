@@ -111,6 +111,8 @@ namespace ChatFlow
             _expanded = expanded;
             _boundKey = key;
             _readers.Clear();
+            // 字段控件连句柄一起销毁：行被复用时只清集合，旧控件的窗口句柄没人回收
+            foreach (Control stale in _fields.Controls.Cast<Control>().ToArray()) stale.Dispose();
             _fields.Controls.Clear();
 
             _title.Text = survey.Title;

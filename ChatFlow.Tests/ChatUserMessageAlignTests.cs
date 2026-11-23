@@ -48,6 +48,38 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
+        public void ShortUserMessage_TightensBox_NotHalfWidth()
+        {
+            // 盒宽取「最宽一行 + 内边距」：短消息只占自己的宽度，不白撑到半屏
+            using var owner = new ChatFlowControl();
+            using var row = new ChatMessageRow(owner);
+            using var host = new WF.Form();
+            host.Controls.Add(row);
+            host.Show();
+            try
+            {
+                var font = new Font("Consolas", 9.75F);
+                var turn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "短"),
+                    Assistant = new ChatMessage("assistant", "答"),
+                };
+                row.Width = RowWidth;
+                row.Height = 300;
+                row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.User), font, RowWidth);
+
+                var body = row.BodyBox;
+                Assert.True(body.Width < RowWidth / 2, $"短消息的正文盒应收紧到自身宽度（Width={body.Width}）");
+                Assert.True(body.Right >= RowWidth - Dip(row, ChatMessageRow.TextRightSpace) - 1,
+                    $"收紧后仍要靠右贴齐行尾留白（Right={body.Right}）");
+            }
+            finally
+            {
+                host.Hide();
+            }
+        }
+
+        [StaFact]
         public void AssistantMessage_StaysLeftAligned_FullWidth()
         {
             using var owner = new ChatFlowControl();

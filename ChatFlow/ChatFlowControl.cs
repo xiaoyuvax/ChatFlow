@@ -1,4 +1,4 @@
-﻿using FastColoredTextBoxNS;
+using FastColoredTextBoxNS;
 
 namespace ChatFlow
 {
@@ -8,7 +8,7 @@ namespace ChatFlow
     /// 仅实例化可见区域附近一屏缓冲内的行控件，滚动时把离屏行控件移到滚动方向复用。
     /// 数据源：ChatTurnBook（每项 ChatTurn 含 User/Assistant 两条消息与 Selected 状态）。
     /// </summary>
-    public class ChatFlowControl : Control
+    public partial class ChatFlowControl : Control
     {
         /// <summary>行高缓存（含上下间距），按 ChatFlowItem 顺序排列。</summary>
         private readonly List<ChatFlowItem> items = [];
@@ -25,6 +25,13 @@ namespace ChatFlow
         private readonly HashSet<ChatFlowItem> measuredItems = [];
 
         private readonly List<ChatMessageRow> rowPool = [];
+        /// <summary>离屏浮层（调查卡 / 链接行 / 「工作中…」指示行）的控件池。
+        /// 它们原先离屏只是 Hide() 留在控件树里：每次重建都换一批 ChatFlowItem 对象，旧控件再也对不上号，
+        /// 于是一个流式回合每刷新一次就永久漏一个窗口句柄。跑十几小时后 USER 句柄耗尽，
+        /// CreateHandle 全线失败（Win32 1158「创建窗口句柄时出错」），界面连锁崩溃、进程退出。</summary>
+        private readonly List<ChatCardRow> cardPool = [];
+        private readonly List<ChatLinkRow> linkPool = [];
+        private readonly List<ChatThinkingRow> thinkingPool = [];
         /// <summary>当前显示操作按钮的行（悬停中的问答对末尾行；鼠标在用户行上也归到它）。</summary>
         private ChatMessageRow actionRow;
         private readonly VScrollBar vbar = new();
@@ -273,7 +280,12 @@ namespace ChatFlow
             {
                 if (suspendRendering == value) return;
                 suspendRendering = value;
-                if (value) return;
+                if (value)
+                {
+                    // 页面切走：闪现节拍器跟着停，别在后台空转
+                    flashPulse.Stop();
+                    return;
+                }
                 autoScrollToEnd = true;
                 if (renderDirty)
                 {
@@ -281,6 +293,9 @@ namespace ChatFlow
                     RebuildItems();
                 }
                 else ScrollToEnd();
+                // 暂停期间停掉的节拍器：流式回合还在跑就重新起表（否则切回来尾部半行不跟着走）
+                if (DataSource?.Turns.LastOrDefault()?.Streaming == true && !flashPulse.Enabled)
+                    flashPulse.Start();
             }
         }
 
@@ -311,6 +326,12 @@ namespace ChatFlow
             stickyThinking.Click += (_, _) => CollapseStickyThinking();
             Controls.Add(stickyThinking);
 
+            // 拖动滚动条时的轮次刻度与预览浮窗（实现在 ChatFlowControl.ScrollTicks.cs）
+            InitializeScrollTicks();
+
+            // 工具闪现区节拍器：只在流式回合跑（UpdateStreamingMessage 见到流式就起、收尾就停），
+            // 免得每个聊天控件都挂一个空转计时器；宿主可用 FlashInterval 调速
+            flashPulse.Tick += (_, _) => PulseFlash();
             markdownDelay.Tick += (_, _) =>
             {
                 markdownDelay.Stop();
@@ -347,10 +368,13 @@ namespace ChatFlow
             if (!settingScrollInternally)
             {
                 autoScrollToEnd = IsAtEnd;
+                // 滑块靠近某轮刻线时贴上去；贴住后由递归进来的这次回调负责重排，这里直接交回
+                if (ApplyScrollMagnet()) return;
                 PauseMarkdown();   // 用户正在翻历史：先按纯文本排，停稳后再补 markdown
             }
             Relayout();
             UpdateJumpToEndButton();
+            UpdateScrollDragVisuals();
         }
 
         /// <summary>「跳到末尾」：恢复自动跟随、按真实渲染重测一遍可见行高，再滚到底。</summary>
@@ -418,7 +442,7 @@ namespace ChatFlow
                 var item = items[i];
                 if (item.Kind != ChatFlowItemKind.Assistant) continue;
                 if (item.ThinkingText == null || item.IsThinkingContinuation || !item.ThinkingExpanded) continue;
-                int headerY = prefixSum[i] + Dip((item.IsContinuation ? 0 : ChatMessageRow.RoleIndent) + 2);
+                int headerY = prefixSum[i] + Dip((item.IsContinuation ? 0 : ChatMessageRow.MessageTopPad) + 2);
                 // 长过程会被拆成多片（只有第一片有折叠头）：块的底部要算到同一轮的最后一片
                 int last = i;
                 while (last + 1 < items.Count && items[last + 1].Turn == item.Turn) last++;
@@ -445,7 +469,7 @@ namespace ChatFlow
             stickyThinking.BackColor = BackColor;   // 不透明：盖住下面的正文
             int contentW = Math.Max(1, ClientSize.Width - (vbar.Visible ? vbar.Width : 0));
             // 整行铺满（左侧不留缝），文字仍与行内折叠头的 x 对齐
-            stickyThinking.TextIndent = Dip(ChatMessageRow.RoleIndent);
+            stickyThinking.TextIndent = Dip(ChatMessageRow.MessageTopPad);
             stickyThinking.Bounds = new Rectangle(0, 0, contentW, Dip(ChatMessageRow.ThinkingHeaderH));
             if (!stickyThinking.Visible) stickyThinking.Visible = true;
             stickyThinking.Invalidate();
@@ -491,6 +515,8 @@ namespace ChatFlow
         {
             if (disposing) ChatTheme.Changed -= OnAppThemeChanged;
             if (disposing) markdownDelay.Dispose();
+            if (disposing) scrollDragIdle.Dispose();
+            if (disposing) flashPulse.Dispose();
             base.Dispose(disposing);
         }
 
@@ -614,8 +640,8 @@ namespace ChatFlow
             var message = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = phase };
             string answer = message.Text;
             string thinking = message.ThinkingText;
-            if (turn.Streaming && answer.Length == 0 && thinking == null)
-                return null;   // 还没出字也没有思考区：这一行只会是「空白文本框」
+            if (turn.Streaming && answer.Length == 0 && thinking == null && message.Text.Length == 0)
+                return null;   // 还没出字、也没思考区也没闪现内容：这一行只会是「空白文本框」
 
             if (thinking != null && thinking.Length > MaxItemChars && message.ThinkingExpanded)
             {
@@ -675,6 +701,7 @@ namespace ChatFlow
             var anchor = !autoScrollToEnd ? CaptureTurnAnchor() : null;
             items.Clear();
             ClearHeights();
+            InvalidateScrollTicks();
             if (DataSource != null)
             {
                 int index = 0;
@@ -772,6 +799,97 @@ namespace ChatFlow
 
         #endregion 数据绑定
 
+        #region 工具闪现区
+
+        /// <summary>闪现节拍下限（毫秒）：再快只是白刷界面。</summary>
+        public const int FlashMinInterval = 300;
+
+        /// <summary>闪现节拍上限（毫秒）：再慢就起不到「还在干活」的提示作用。</summary>
+        public const int FlashMaxInterval = 5000;
+
+        /// <summary>账本里没给数值时的闪现节拍（毫秒）。</summary>
+        public const int DefaultFlashInterval = 1000;
+
+        /// <summary>尾部测量上限（字符）：半行远用不到这么多，只为压住排版测量开销。</summary>
+        private const int FlashTailMaxChars = 240;
+
+        /// <summary>闪现节拍器：流式回合期间运行，回合结束即停（不空转）。</summary>
+        private readonly System.Windows.Forms.Timer flashPulse = new() { Interval = DefaultFlashInterval };
+
+        /// <summary>工具闪现区节拍（毫秒，钳在 300–5000）：没有正文、也没有正在执行的工具行时，
+        /// 每隔这么久把思维链尾部半行刷进正文 FCTB，让用户看到模型还在干活。
+        /// 数值由宿主按账本 limit.flash_interval 注入（可演化）。</summary>
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public int FlashInterval
+        {
+            get => flashPulse.Interval;
+            set => flashPulse.Interval = Math.Clamp(value, FlashMinInterval, FlashMaxInterval);
+        }
+
+        /// <summary>一拍：判断该不该闪现、闪什么；内容变了才重绑那一行（相邻两拍 ≥300ms，一次排版开销可忽略）。</summary>
+        internal void PulseFlash()
+        {
+            if (IsDisposed || suspendRendering || DataSource == null) { flashPulse.Stop(); return; }
+            var turn = DataSource.Turns.LastOrDefault();
+            if (turn == null) { flashPulse.Stop(); return; }
+            // 正文已出字、或正在执行工具：让位给正文/工具行，这时候闪回去只会盖掉有用信息；
+            // 回合已结束（停止/失败/正常收尾）也不再闪，顺手把残留的闪现存掉。
+            string flash = turn.Streaming && string.IsNullOrEmpty(turn.AssistantText)
+                                                 && string.IsNullOrEmpty(turn.ToolStatusText)
+                ? TailHalfLine(turn.ReasoningText, chatFont, RowTextWidth / 2)
+                : null;
+            // 内容没变就不动界面：节拍只负责「有新东西才换一行」，同一行不反复重排
+            if (string.Equals(flash, turn.FlashText, StringComparison.Ordinal))
+            {
+                if (!turn.Streaming) flashPulse.Stop();   // 回合已收尾：没有下一拍了，收表
+                return;
+            }
+            turn.FlashText = flash;
+            UpdateStreamingMessage(turn, null, force: true);
+            if (!turn.Streaming) flashPulse.Stop();
+        }
+
+        /// <summary>思维链尾部半行：取最后一行非空文本，按真实排版宽度从尾部截（前面加省略号）；没有内容返回 null。</summary>
+        internal static string TailHalfLine(string text, Font font, int maxWidth)
+        {
+            if (string.IsNullOrEmpty(text) || font == null || maxWidth <= 0) return null;
+            int end = text.Length;
+            while (end > 0)
+            {
+                int start = text.LastIndexOf('\n', end - 1) + 1;
+                string line = text[start..end].Trim();
+                end = start - 1;              // 这一行是空的：往上再看一行
+                if (line.Length > 0) return TruncateTail(line, font, maxWidth);
+            }
+            return null;
+        }
+
+        /// <summary>从尾部截到宽度以内（二分 + 真实排版宽度）；截过加省略号（省略号宽度也算在里面），代理对不劈开。</summary>
+        private static string TruncateTail(string line, Font font, int maxWidth)
+        {
+            if (WidthOf(line, font) <= maxWidth) return line;
+            const string ellipsis = "…";
+            int budget = maxWidth - WidthOf(ellipsis, font);
+            if (budget <= 0) return null;
+            int hi = Math.Min(line.Length, FlashTailMaxChars), lo = 1;
+            while (lo < hi)
+            {
+                int mid = (lo + hi + 1) / 2;
+                if (WidthOf(line[^mid..], font) <= budget) lo = mid;
+                else hi = mid - 1;
+            }
+            int from = line.Length - lo;
+            // 代理对不劈开：截点落在低位代理上就往前挪一个
+            if (from > 0 && from < line.Length && char.IsLowSurrogate(line[from])) from++;
+            return ellipsis + line[from..];
+        }
+
+        private static int WidthOf(string text, Font font)
+            => TextRenderer.MeasureText(text, font, new Size(int.MaxValue, int.MaxValue),
+                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
+
+        #endregion 工具闪现区
+
         #region 布局 / 虚拟化
 
         private int RowTextWidth
@@ -819,8 +937,10 @@ namespace ChatFlow
             // 估算偏太多会让「实测 ↔ 估算」切换时整屏跳位，所以字符宽/行高都要按 DPI 缩放，
             // 且换行符只切行、不再额外加一行（否则长段落按换行数翻倍，估算会比实测大一倍）。
             float scale = DeviceDpi / 96f;
-            // 用户消息的正文盒只占行宽一半（见 ChatMessageRow.UpdateBodyGeometry），估算行数按半宽算
-            int usable = Math.Max(40, item.IsUser ? RowTextWidth / 2 : RowTextWidth - 8);
+            // 用户消息的正文盒按实际盒宽（封顶行宽一半、短消息收紧，与行内排版同一套算法）估算行数
+            int boxWidth = ChatMessageRow.BodyBoxWidth(item.IsUser,
+                item.IsUser ? ChatMessageRow.NaturalWidth(item.Text, chatFont) : 0, RowTextWidth, scale);
+            int usable = Math.Max(40, item.IsUser ? boxWidth - 8 : RowTextWidth - 8);
             int charW = Math.Max(6, (int)Math.Round(chatFont.Size * 0.62f * scale));
             int perLine = Math.Max(10, usable / charW);
             int lineH = Math.Max(12, (int)Math.Round((chatFont.Size * 1.55f + 6) * scale));
@@ -828,7 +948,7 @@ namespace ChatFlow
             // 折叠思考区只显示一行摘要；展开时计入思考区文本
             if (item.ThinkingText != null)
                 lines += item.ThinkingExpanded ? CountLines(item.ThinkingText, perLine) : 1;
-            h = lines * lineH + 2 + 8 + ChatMessageRow.RoleIndent + 10;
+            h = lines * lineH + 2 + 8 + ChatMessageRow.MessageTopPad + 10;
             heightCache[item] = h;   // 记忆估算（宽度/字体/结构变化时缓存已清）
             return h;
         }
@@ -988,6 +1108,7 @@ namespace ChatFlow
             }
             UpdateJumpToEndButton();   // 内容/视口变化后同步浮动按钮显隐与位置
             UpdateStickyThinking();    // 折叠头被滚出可见区时，在顶部顶替它
+            if (scrollDragging) UpdateScrollDragVisuals();   // 拖动中新实例化的行会盖住刻度/浮窗，拉回最上层
         }
 
         /// <summary>行内 markdown 渲染完成（RichTextBox 内容尺寸变化）后补一次重测：
@@ -1051,6 +1172,7 @@ namespace ChatFlow
             if (items.Count == 0)
             {
                 foreach (var row in realized.Values.ToArray()) ReleaseRow(row);
+                PoolAllOverlays();
                 Invalidate();
                 return;
             }
@@ -1101,7 +1223,7 @@ namespace ChatFlow
                     if (!itemIndex.TryGetValue(item, out int lidx) || lidx < first || lidx > last)
                     {
                         linkRows.Remove(item);
-                        lrow.Hide();
+                        RecycleOverlay(lrow, linkPool);
                     }
                 }
                 foreach (var (item, card) in cardRows.ToArray())
@@ -1109,7 +1231,7 @@ namespace ChatFlow
                     if (!itemIndex.TryGetValue(item, out int idx) || idx < first || idx > last)
                     {
                         cardRows.Remove(item);
-                        card.Hide();
+                        RecycleOverlay(card, cardPool);
                     }
                 }
                 foreach (var (item, thinking) in thinkingRows.ToArray())
@@ -1117,7 +1239,7 @@ namespace ChatFlow
                     if (!itemIndex.TryGetValue(item, out int idx) || idx < first || idx > last)
                     {
                         thinkingRows.Remove(item);
-                        thinking.Hide();
+                        RecycleOverlay(thinking, thinkingPool);
                     }
                 }
 
@@ -1131,9 +1253,13 @@ namespace ChatFlow
                     {
                         if (!linkRows.TryGetValue(item, out var linkRow))
                         {
-                            linkRow = new ChatLinkRow();
-                            linkRow.Activated += l => LinkActivated?.Invoke(this, new ChatLinkEventArgs(l));
-                            Controls.Add(linkRow);
+                            linkRow = TakePooled(linkPool);
+                            if (linkRow == null)
+                            {
+                                linkRow = new ChatLinkRow();
+                                linkRow.Activated += l => LinkActivated?.Invoke(this, new ChatLinkEventArgs(l));
+                                Controls.Add(linkRow);
+                            }
                             linkRows[item] = linkRow;
                         }
                         int linkHeight = linkRow.Bind(item.Link, chatFont, rowWidth);
@@ -1157,11 +1283,15 @@ namespace ChatFlow
                                 || expandedSurveyId == null && IsLatestPending(item.Survey));
                         if (!cardRows.TryGetValue(item, out var card))
                         {
-                            card = new ChatCardRow { Visible = true };
-                            card.Submitted += OnCardSubmitted;
-                            card.Skipped += OnCardSkipped;
-                            card.Toggled += OnCardToggled;
-                            Controls.Add(card);
+                            card = TakePooled(cardPool);
+                            if (card == null)
+                            {
+                                card = new ChatCardRow { Visible = true };
+                                card.Submitted += OnCardSubmitted;
+                                card.Skipped += OnCardSkipped;
+                                card.Toggled += OnCardToggled;
+                                Controls.Add(card);
+                            }
                             cardRows[item] = card;
                         }
                         int measuredCard = card.Bind(item.Survey, chatFont, rowWidth, expandedCard);
@@ -1181,8 +1311,12 @@ namespace ChatFlow
                     {
                         if (!thinkingRows.TryGetValue(item, out var thinking))
                         {
-                            thinking = new ChatThinkingRow { Visible = true };
-                            Controls.Add(thinking);
+                            thinking = TakePooled(thinkingPool);
+                            if (thinking == null)
+                            {
+                                thinking = new ChatThinkingRow { Visible = true };
+                                Controls.Add(thinking);
+                            }
                             thinkingRows[item] = thinking;
                         }
                         int measuredThinking = thinking.Bind(rowWidth);
@@ -1266,6 +1400,32 @@ namespace ChatFlow
             }
         }
 
+        /// <summary>条目清空时把全部浮层收进池：只 Hide 不回收会永久占用窗口句柄。</summary>
+        private void PoolAllOverlays()
+        {
+            foreach (var (item, row) in linkRows.ToArray()) { linkRows.Remove(item); RecycleOverlay(row, linkPool); }
+            foreach (var (item, row) in cardRows.ToArray()) { cardRows.Remove(item); RecycleOverlay(row, cardPool); }
+            foreach (var (item, row) in thinkingRows.ToArray()) { thinkingRows.Remove(item); RecycleOverlay(row, thinkingPool); }
+        }
+
+        /// <summary>离屏浮层：藏起来并放回控件池，下次需要时复用同一个控件（不新建、不 Dispose）。</summary>
+        private static void RecycleOverlay<T>(T control, List<T> pool) where T : Control
+        {
+            if (control == null) return;
+            control.Visible = false;
+            if (!pool.Contains(control)) pool.Add(control);
+        }
+
+        /// <summary>从控件池取一个复用（池空返回 null）：取出的控件仍挂在控件树上，只把可见性打开。</summary>
+        private static T TakePooled<T>(List<T> pool) where T : Control
+        {
+            if (pool.Count == 0) return null;
+            var control = pool[^1];
+            pool.RemoveAt(pool.Count - 1);
+            control.Visible = true;
+            return control;
+        }
+
         /// <summary>按 heightCache（已测量项）+ 估算（未测量项）重建前缀和。</summary>
         private void RebuildSums()
         {
@@ -1280,6 +1440,7 @@ namespace ChatFlow
                 totalHeight += EstimateItem(items[i]);
             }
             prefixSum[count] = totalHeight;
+            InvalidateScrollTicks();
         }
 
         /// <summary>二分查找：返回 y 坐标所在条目的索引。</summary>
@@ -1474,6 +1635,9 @@ namespace ChatFlow
 
             // 页面不在前台：数据照常更新（切回来要看到最新），渲染等恢复后再做
             if (suspendRendering) { renderDirty = true; return; }
+
+            // 流式回合起来就把闪现节拍器叫醒（收尾时它自己停）
+            if (turn.Streaming && !flashPulse.Enabled) flashPulse.Start();
 
             // 长正文会被拆成多个分片：只有最后一片在视口底部，取第一片时它早已滚出屏幕，等于每拍都整表重建
             var item = items.LastOrDefault(i => i.Turn == turn && i.Kind == ChatFlowItemKind.Assistant);
@@ -1813,6 +1977,22 @@ namespace ChatFlow
             }
         }
 
+        /// <summary>
+        /// 滚动条的真实交互会向父窗口发 WM_VSCROLL：SB_ENDSCROLL(=8) 是松手/操作结束的唯一可靠信号，
+        /// 其余（拖滑块、点箭头、点轨道、键盘）都算「正在操作」。
+        /// 程序内设 vbar.Value 不发这条消息，因此宿主的 ScrollToEnd/ScrollToTurn 不会亮刻度、也不会被磁吸。
+        /// </summary>
+        protected override void WndProc(ref Message m)
+        {
+            if (m.Msg == 0x0115 && m.LParam == vbar.Handle)   // WM_VSCROLL
+            {
+                int code = (int)((long)m.WParam & 0xFFFF);
+                if (code == 8) EndScrollDrag();   // SB_ENDSCROLL：松手/操作结束
+                else BeginScrollDrag(fromMouse: true);
+            }
+            base.WndProc(ref m);
+        }
+
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
@@ -1931,6 +2111,12 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         public ChatLink Link { get; init; }
         public bool IsUser => Kind == ChatFlowItemKind.User;
 
+        /// <summary>协作提示（agent 自动插入的仿用户消息）：只留一行标题，全文折叠在思考区里，界面用淡黄底区分。</summary>
+        public bool Notice => Turn?.Notice == true;
+
+        /// <summary>自动提示的来源标签（协作提示 / 私信 / Puppet 动作…）；未分类时退回「协作提示」。</summary>
+        public string NoticeLabel => NoticeKindText(Turn?.NoticeKind);
+
         /// <summary>展示文本：助手条目在正文前附上可见的工具调用行（每次调用一行），示意 Agent 发起了工具/助理调用。
         /// 流式期间**不堆积已完成工具行**（历史 bug：正文底部堆到 11 行，与思考区轨迹重复）——正文为空时
         /// 只显示正在执行的工具行（<see cref="ChatTurn.ToolStatusText"/>，并行批次多行齐显、整批清除），
@@ -1941,17 +2127,20 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
             {
                 if (Kind == ChatFlowItemKind.Thinking) return string.Empty;
                 if (TextOverride != null) return TextOverride;
+                // 协作提示没有正文：正文区留空，只显示折叠头那行标题，详情点开再看
+                if (IsUser && Notice) return string.Empty;
                 if (Phase >= 0)
                 {
                     string phaseAnswer = Phase < Turn.Phases.Count ? Turn.Phases[Phase].Answer : string.Empty;
                     // 末段正文还没出字时，正文区照旧显示正在执行的工具行（与不分段时的流式分支一致）
                     if (phaseAnswer.Length == 0 && Turn.Streaming && Phase == Turn.Phases.Count - 1)
-                        return Turn.ToolStatusText ?? string.Empty;
+                        return Turn.ToolStatusText ?? Turn.FlashText ?? string.Empty;
                     return phaseAnswer;
                 }
                 if (IsUser) return Turn.UserText;
                 if (Turn.Streaming)
-                    return string.IsNullOrEmpty(Turn.AssistantText) ? Turn.ToolStatusText ?? string.Empty : Turn.AssistantText;
+                    return !string.IsNullOrEmpty(Turn.AssistantText) ? Turn.AssistantText
+                        : Turn.ToolStatusText ?? Turn.FlashText ?? string.Empty;
                 // 正文只放答复；思维链与工具轨迹进思考区（FCTB，默认折叠）
                 return Turn.AssistantText;
             }
@@ -1963,13 +2152,14 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
             => Kind == ChatFlowItemKind.Assistant && Turn.Streaming
                && (Phase < 0 || Phase == Turn.Phases.Count - 1)
                && Text.Length == 0
-               && (Turn.ToolStatusText != null || Turn.ToolStepCount > 0);
+               && (Turn.ToolStatusText != null || Turn.ToolStepCount > 0 || Turn.FlashText != null);
 
         /// <summary>思考区内容（仅助手条目有；用户条目返回 null）。有时间线时整段原样进 FCTB，不做 markdown 渲染。</summary>
         public string ThinkingText
         {
             get
             {
+                if (IsUser && Notice) return Turn.UserText;   // 协作提示：全文进折叠区
                 if (IsUser || Kind == ChatFlowItemKind.Thinking) return null;
                 if (ThinkingOverride != null) return ThinkingOverride;
                 if (IsContinuation) return null;
@@ -1994,6 +2184,7 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
             get
             {
                 const string title = "思考与工具过程";
+                if (IsUser && Notice) return NoticeTitle(Turn.UserText);
                 if (IsUser) return title;
                 if (Phase > 0)
                 {
@@ -2008,6 +2199,19 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
                 return preview == null ? title : $"{title} · {preview}";
             }
         }
+
+        /// <summary>协作提示的标题：来源标签 + 正文首行（过长截断），全文在折叠区里。</summary>
+        private string NoticeTitle(string text)
+            => (FirstLine(text) is { } line ? NoticeLabel + " · " + line : NoticeLabel);
+
+        /// <summary>自动提示的来源标签：宿主只给 key，文案在这里统一。</summary>
+        internal static string NoticeKindText(string kind) => (kind ?? "").Trim().ToLowerInvariant() switch
+        {
+            "mention" => "会话私信",
+            "puppet" => "Puppet 动作",
+            "collab" => "协作提示",
+            _ => "协作提示"
+        };
 
         /// <summary>首行摘要（≤60 字符）；无内容返回 null。</summary>
         private static string FirstLine(string text)
@@ -2028,7 +2232,9 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         /// <summary>思考区是否展开（数据侧持有，跨重建保留；null=未交互按时间线有无决定：
         /// 有时间线（思维与工具交替）默认展开，否则看不到交错过程；纯推理仍折叠）。</summary>
         public bool ThinkingExpanded
-            => !ForceThinkingCollapsed && (Phase >= 0
+            => !ForceThinkingCollapsed && (Turn?.Notice == true
+                ? Turn.ThinkingExpanded ?? false          // 协作提示默认收起，用户点开过才展开
+                : Phase >= 0
                 ? (Turn.PhaseExpanded.TryGetValue(Phase, out bool expanded) ? expanded : DefaultThinkingExpanded)
                 : Turn.ThinkingExpanded ?? DefaultThinkingExpanded);
 

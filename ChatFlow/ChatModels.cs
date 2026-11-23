@@ -1,4 +1,4 @@
-﻿using System.Text.Json.Serialization;
+using System.Text.Json.Serialization;
 
 namespace ChatFlow
 {
@@ -73,6 +73,14 @@ namespace ChatFlow
 
 
         /// <summary>思考区汇总：已执行的工具调用步数。</summary>
+        /// <summary>协作提示（agent 自动插入的仿用户消息）：界面折叠成一行标题、淡黄底区分。</summary>
+        [JsonIgnore]
+        public bool Notice { get; set; }
+
+        /// <summary>自动提示的来源（collab / mention / puppet / other）：折叠头据此标来源，空 = 未分类。</summary>
+        [JsonIgnore]
+        public string NoticeKind { get; set; } = string.Empty;
+
         [JsonIgnore]
         public int ToolStepCount { get; set; }
 
@@ -92,6 +100,12 @@ namespace ChatFlow
         /// 由 <see cref="ToolStarted"/>/<see cref="ToolsFinished"/> 维护。</summary>
         [JsonIgnore]
         public string ToolStatusText { get; set; }
+
+        /// <summary>工具闪现区内容（思维链尾部半行）：没有正文、也没有正在执行的工具行时，
+        /// 由 ChatFlowControl 按节拍算好写进来，正文 FCTB 直接显示它。
+        /// 宿主不写这个字段；只在流式期间有意义，落盘时丢弃。</summary>
+        [JsonIgnore]
+        public string FlashText { get; set; }
 
         /// <summary>记录一个开始执行的工具行：并行批次同时显示，同一行不重复叠加。</summary>
         public void ToolStarted(string line)

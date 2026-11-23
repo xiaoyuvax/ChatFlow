@@ -19,6 +19,9 @@ namespace ChatFlow
         public Color InputFore { get; set; }
         public Color ChatFore { get; set; }
         public Color ChatThinkingFore { get; set; }
+
+        /// <summary>协作提示（仿用户消息）的底色：淡黄，与正文区区分；null = 用内置淡黄。</summary>
+        public Color NoticeBack { get; set; }
     }
 
     /// <summary>

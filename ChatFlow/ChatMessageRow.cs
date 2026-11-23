@@ -14,7 +14,7 @@ namespace ChatFlow
     /// </summary>
     public class ChatMessageRow : Panel
     {
-        public const int RoleIndent = 24;      // 每条消息的顶部留白（原「角色标注」行高；标注已取消）
+        public const int MessageTopPad = 24;   // 每条消息的顶部留白（原「角色标注」行高，标注已取消）
         public const int TextRightSpace = 8;   // 文本右侧留白
         private const int RowVPad = 8;         // 行上下留白
         internal const int ThinkingHeaderH = 18; // 思考区折叠头高度（浮动顶替条也用它对齐）
@@ -92,21 +92,28 @@ namespace ChatFlow
         {
             bool isUser = item != null && item.IsUser;
             if (font != null) _naturalWidth = isUser ? NaturalWidth(item.Text, font) : 0;
+            _bodyWidth = BodyBoxWidth(isUser, _naturalWidth, rowWidth, DeviceDpi / 96f);
+            _bodyLeft = isUser ? Math.Max(0, Math.Max(Dip(20), rowWidth - Dip(TextRightSpace)) - _bodyWidth) : 0;
+        }
+
+        /// <summary>
+        /// 正文盒宽度的唯一出口：行内排版（<see cref="UpdateBodyGeometry"/>）与容器估算行数
+        /// （ChatFlowControl.EstimateItem）共用，两处不会各算一套、算出不同换行。
+        /// </summary>
+        /// <param name="naturalWidth">用户消息最宽一行的像素宽度（<see cref="NaturalWidth"/>），助手消息忽略。</param>
+        /// <param name="scale">DeviceDpi / 96。</param>
+        internal static int BodyBoxWidth(bool isUser, int naturalWidth, int rowWidth, float scale)
+        {
+            int Dip(int value) => (int)Math.Round(value * scale);
             int fullWidth = Math.Max(Dip(20), rowWidth - Dip(TextRightSpace));
-            if (!isUser)
-            {
-                _bodyWidth = fullWidth;
-                _bodyLeft = 0;
-                return;
-            }
+            if (!isUser) return fullWidth;
             int cap = Math.Max(Dip(80), rowWidth / UserBodyWidthRatio);
-            int wanted = _naturalWidth + Dip(FoldGutterWidth) + Dip(TextRightSpace);
-            _bodyWidth = Math.Max(Dip(80), Math.Min(fullWidth, Math.Min(cap, wanted)));
-            _bodyLeft = Math.Max(0, fullWidth - _bodyWidth);
+            int wanted = Math.Max(0, naturalWidth) + Dip(FoldGutterWidth) + Dip(TextRightSpace);
+            return Math.Max(Dip(80), Math.Min(fullWidth, Math.Min(cap, wanted)));
         }
 
         /// <summary>文本按单行排版时最宽一行的像素宽度（用户消息据此收紧正文盒，短消息不会撑到半屏）。</summary>
-        private static int NaturalWidth(string text, Font font)
+        internal static int NaturalWidth(string text, Font font)
         {
             if (string.IsNullOrEmpty(text) || font == null) return 0;
             int widest = 0;
@@ -121,6 +128,16 @@ namespace ChatFlow
         }
 
         private static ChatPalette P => ChatTheme.Current;   // null = 浅色（沿用原配色）
+
+        /// <summary>协作提示的底色（淡黄）；普通行返回 null。设成了透明表示不铺。</summary>
+        private static Color? NoticeBackColor(ChatFlowItem item)
+        {
+            if (item?.Notice != true) return null;
+            Color back = P != null && P.NoticeBack != Color.Empty
+                ? P.NoticeBack
+                : Color.FromArgb(0xFF, 0xFF, 0xE0);
+            return back;
+        }
 
         public ChatMessageRow(ChatFlowControl owner)
         {
@@ -162,7 +179,7 @@ namespace ChatFlow
             {
                 AutoSize = false,
                 Size = new Size(Dip(200), Dip(18)),
-                Location = new Point(Dip(RoleIndent), Dip(RoleIndent + 2)),
+                Location = new Point(Dip(MessageTopPad), Dip(MessageTopPad + 2)),
                 TextAlign = ContentAlignment.MiddleLeft,
                 ForeColor = Color.Gray,
                 Font = new Font("Microsoft YaHei UI", 7.5F),
@@ -284,12 +301,24 @@ namespace ChatFlow
             bodyShown = !string.IsNullOrEmpty(item.Text) || item.ReserveBody;
             chk.Checked = item.Turn.Selected;
             // 勾选按整轮生效、由第一片代表：续片不单独出勾选框，免得只取消其中一段
-            chk.Visible = _showSelection && !item.IsContinuation;
+            chk.Visible = _showSelection && !item.IsContinuation && !item.Notice;
             txt.BackColor = owner.BackColor;
             txt.ForeColor = P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
             txtThinking.ForeColor = P != null ? P.ChatThinkingFore : Color.FromArgb(0x5F, 0x6E, 0x7E);
             // 思考区底色与聊天背景一致，避免 FCTB 出现色块。
             txtThinking.BackColor = owner.BackColor;
+            // 协作提示整行铺淡黄底，文字与折叠头强制深色（浅色记号在深色主题上也不能反白）
+            Color? noticeBack = NoticeBackColor(item);
+            if (noticeBack is { } back)
+            {
+                // 深色主题的淡黄是压暗的一档，文字跟着反白，不然深棕字压在暗黄上看不见
+                Color fore = back.GetBrightness() < 0.5f
+                    ? Color.FromArgb(0xFF, 0xF1, 0xB8)
+                    : Color.FromArgb(0x61, 0x4A, 0x00);
+                lblThinking.ForeColor = fore;
+                txtThinking.ForeColor = fore;
+                txtThinking.BackColor = back;
+            }
 
             // 思考区：有内容才显示折叠头；执行中的「思考中…」由末尾的动画行统一提示。
             // 长思维链拆片后的后续分片没有折叠头，展开态下直接铺开。
@@ -359,8 +388,8 @@ namespace ChatFlow
                 // 后续分片没有折叠头，只有思考区
                 contentH += ThinkingBoxHeight();
             }
-            int role = Item?.IsContinuation == true ? 0 : Dip(RoleIndent);
-            return contentH + role + Dip(2) + Dip(RowVPad);
+            int topPad = Item?.IsContinuation == true ? 0 : Dip(MessageTopPad);
+            return contentH + topPad + Dip(2) + Dip(RowVPad);
         }
 
         /// <summary>整行高度的安全上限（设备像素）：Win32 把子窗口位置钳在 ±32767，行再高就摆不到位、底部内容永远滚不到。</summary>
@@ -374,7 +403,7 @@ namespace ChatFlow
         private int ThinkingBoxHeight()
         {
             int body = BodyContentHeight();
-            int room = Math.Max(Dip(120), MaxRowHeightPx - body - Dip(ThinkingHeaderH) - Dip(RowVPad) - Dip(RoleIndent));
+            int room = Math.Max(Dip(120), MaxRowHeightPx - body - Dip(ThinkingHeaderH) - Dip(RowVPad) - Dip(MessageTopPad));
             return Math.Min(ThinkingNeedHeight(), room);
         }
 
@@ -792,16 +821,38 @@ namespace ChatFlow
 
         /// <summary>子控件布局：折叠头 →（展开时）思考区 → 正文，正文永远在最下且 z 序最顶。
         /// 必须显式调用（Bind / 尺寸变化 / 思考区可见性切换），不能依赖 OnSizeChanged。</summary>
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            // 协作提示整行铺淡黄底（圆角内缩一点，别顶到相邻消息）
+            if (NoticeBackColor(Item) is { } back)
+            {
+                using var path = new System.Drawing.Drawing2D.GraphicsPath();
+                int inset = Dip(MessageTopPad) / 2;
+                var box = new Rectangle(inset, Math.Max(0, inset / 2),
+                    Math.Max(1, Width - inset * 2), Math.Max(1, Height - inset));
+                int d = Math.Max(1, Math.Min(Dip(8) * 2, Math.Min(box.Width, box.Height)));
+                path.AddArc(box.Left, box.Top, d, d, 180, 90);
+                path.AddArc(box.Right - d, box.Top, d, d, 270, 90);
+                path.AddArc(box.Right - d, box.Bottom - d, d, d, 0, 90);
+                path.AddArc(box.Left, box.Bottom - d, d, d, 90, 90);
+                path.CloseFigure();
+                using var fill = new SolidBrush(back);
+                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                e.Graphics.FillPath(fill, path);
+            }
+            base.OnPaint(e);
+        }
+
         private void LayoutContent()
         {
             chk.SetBounds(Dip(2), Dip(2), Dip(20), Dip(20));
             bool continuation = Item?.IsContinuation == true;
 
-            int y = (continuation ? 0 : Dip(RoleIndent)) + Dip(2);
+            int y = (continuation ? 0 : Dip(MessageTopPad)) + Dip(2);
             int contentW = ContentWidth;
             if (thinkingHeaderShown)
             {
-                lblThinking.SetBounds(Dip(RoleIndent), y, Math.Max(Dip(100), contentW - Dip(RoleIndent)), Dip(ThinkingHeaderH));
+                lblThinking.SetBounds(Dip(MessageTopPad), y, Math.Max(Dip(100), contentW - Dip(MessageTopPad)), Dip(ThinkingHeaderH));
                 y += Dip(ThinkingHeaderH);
             }
             if (thinkingBoxShown)

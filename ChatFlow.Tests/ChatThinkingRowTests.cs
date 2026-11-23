@@ -35,7 +35,7 @@ namespace ChatFlow.Tests
                 var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
                 measured = row.Bind(item, new Font("Consolas", 9.75F), 600);
 
-                // 折叠头可见（有轨迹即显示），位于正文（y=RoleIndent+2 起步）下方之上
+                // 折叠头可见（有轨迹即显示），位于正文（y=MessageTopPad+2 起步）下方之上
                 var fld = GetField<WF.Label>(row, "lblThinking");
                 var txt = GetField<FastColoredTextBoxNS.FastColoredTextBox>(row, "txt");
                 Assert.True(fld.Visible, "有思考区内容时折叠头必须可见");
