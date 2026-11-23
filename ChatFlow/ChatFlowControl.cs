@@ -1834,13 +1834,29 @@ namespace ChatFlow
             if (inLayout) return;
             // 宽度变化会改变换行 → 旧高度全部失效。释放已实例化行强制按新宽度重新 Bind 测量，
             // 否则残留旧高度/仅用估算，宽高不匹配会在底部留下大片空白（要向上滚才看得到文字）。
-            ClearHeights();
-            foreach (var row in realized.Values.ToArray())
-                ReleaseRow(row);
-            UpdateScrollAndLayout();
-            LayoutJumpToEndButton();
-            LayoutJumpToTopButton();
+            // 拖动窗口边缘时 OnResize 每像素一次，每次都全量释放+重排会让拖动本身卡顿；
+            // 拖动期间只把脏标记记下来，松手（resize 结束）后一次重排。
+            if (resizeDebounce == null)
+            {
+                resizeDebounce = new System.Windows.Forms.Timer { Interval = 140 };
+                resizeDebounce.Tick += (_, _) =>
+                {
+                    resizeDebounce.Stop();
+                    if (IsDisposed || inLayout) return;
+                    ClearHeights();
+                    foreach (var row in realized.Values.ToArray())
+                        ReleaseRow(row);
+                    UpdateScrollAndLayout();
+                    LayoutJumpToEndButton();
+                    LayoutJumpToTopButton();
+                };
+            }
+            resizeDebounce.Stop();
+            resizeDebounce.Start();
         }
+
+        /// <summary>resize 结束后的重排节流：拖动期间不逐像素全量重排（每次全释放行+重测一屏 markdown）。</summary>
+        private System.Windows.Forms.Timer resizeDebounce;
 
         /// <summary>隐藏时排过版：隐藏状态下 RichEdit 不排版，markdown 散文块量到的只有几十像素，
         /// 后台标签页里收尾的正文就按这个偏小高度落盘，切回来不重测就只剩开头一段、滚到底也看不到末尾。</summary>
