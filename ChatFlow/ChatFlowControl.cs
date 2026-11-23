@@ -1,4 +1,4 @@
-﻿using FastColoredTextBoxNS;
+using FastColoredTextBoxNS;
 
 namespace ChatFlow
 {
@@ -287,6 +287,9 @@ namespace ChatFlow
                     return;
                 }
                 autoScrollToEnd = true;
+                // 暂停期间攒下的整表重建/重排一次跑完：同样先纯文本出帧、markdown 延迟补齐，
+                // 否则切回标签页/展开侧栏的第一帧要等全屏 markdown 渲染完才出现。
+                PauseMarkdown();
                 if (renderDirty)
                 {
                     renderDirty = false;
@@ -1843,6 +1846,10 @@ namespace ChatFlow
                 {
                     resizeDebounce.Stop();
                     if (IsDisposed || inLayout) return;
+                    // 宽度变了要重测一屏行：markdown 散文块 0.3ms/字符、代码块 FCTB 整段重算，
+                    // 逐行渲染就是「打开等待秒级」的主因。先按纯文本出帧（每行几毫秒），
+                    // 180ms 后 UpgradeMarkdownRows 只把可见行补成 markdown。
+                    PauseMarkdown();
                     ClearHeights();
                     foreach (var row in realized.Values.ToArray())
                         ReleaseRow(row);
