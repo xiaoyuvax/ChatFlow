@@ -1,4 +1,4 @@
-using FastColoredTextBoxNS;
+﻿using FastColoredTextBoxNS;
 
 namespace ChatFlow
 {
@@ -833,9 +833,11 @@ namespace ChatFlow
             var turn = DataSource.Turns.LastOrDefault();
             if (turn == null) { flashPulse.Stop(); return; }
             // 正文已出字、或正在执行工具：让位给正文/工具行，这时候闪回去只会盖掉有用信息；
+            // 思考区展开着也别闪（用户正在读，正文再刷一份尾部只是重复）；收起后自然恢复。
             // 回合已结束（停止/失败/正常收尾）也不再闪，顺手把残留的闪现存掉。
             string flash = turn.Streaming && string.IsNullOrEmpty(turn.AssistantText)
                                                  && string.IsNullOrEmpty(turn.ToolStatusText)
+                                                 && !LatestThinkingExpanded(turn)
                 ? TailHalfLine(turn.ReasoningText, chatFont, RowTextWidth / 2)
                 : null;
             // 内容没变就不动界面：节拍只负责「有新东西才换一行」，同一行不反复重排
@@ -848,6 +850,13 @@ namespace ChatFlow
             UpdateStreamingMessage(turn, null, force: true);
             if (!turn.Streaming) flashPulse.Stop();
         }
+
+        /// <summary>最新回合的思考区是否展开（含分段）：展开着就不再往正文闪尾部半行。</summary>
+        private bool LatestThinkingExpanded(ChatTurn turn)
+            => items.Any(i => ReferenceEquals(i.Turn, turn)
+                              && i.Kind == ChatFlowItemKind.Assistant
+                              && i.ThinkingText != null
+                              && i.ThinkingExpanded);
 
         /// <summary>思维链尾部半行：取最后一行非空文本，按真实排版宽度从尾部截（前面加省略号）；没有内容返回 null。</summary>
         internal static string TailHalfLine(string text, Font font, int maxWidth)
@@ -2112,7 +2121,7 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         public bool IsUser => Kind == ChatFlowItemKind.User;
 
         /// <summary>协作提示（agent 自动插入的仿用户消息）：只留一行标题，全文折叠在思考区里，界面用淡黄底区分。</summary>
-        public bool Notice => Turn?.Notice == true;
+        public bool Notice => IsUser && Turn?.Notice == true;   // only the user row: assistant items of the same turn keep normal colors
 
         /// <summary>自动提示的来源标签（协作提示 / 私信 / Puppet 动作…）；未分类时退回「协作提示」。</summary>
         public string NoticeLabel => NoticeKindText(Turn?.NoticeKind);
@@ -2202,14 +2211,19 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
 
         /// <summary>协作提示的标题：来源标签 + 正文首行（过长截断），全文在折叠区里。</summary>
         private string NoticeTitle(string text)
-            => (FirstLine(text) is { } line ? NoticeLabel + " · " + line : NoticeLabel);
+        {
+            string label = NoticeLabel;
+            if (FirstLine(text) is not { } line) return label;
+            return label.Length == 0 ? line : label + " · " + line;
+        }
 
         /// <summary>自动提示的来源标签：宿主只给 key，文案在这里统一。</summary>
         internal static string NoticeKindText(string kind) => (kind ?? "").Trim().ToLowerInvariant() switch
         {
             "mention" => "会话私信",
             "puppet" => "Puppet 动作",
-            "collab" => "协作提示",
+            // 用户反馈（/complain、/debug）正文自带 [用户反馈] 标签，标题直接用首行
+            "feedback" => "",
             _ => "协作提示"
         };
 
@@ -2232,11 +2246,15 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         /// <summary>思考区是否展开（数据侧持有，跨重建保留；null=未交互按时间线有无决定：
         /// 有时间线（思维与工具交替）默认展开，否则看不到交错过程；纯推理仍折叠）。</summary>
         public bool ThinkingExpanded
-            => !ForceThinkingCollapsed && (Turn?.Notice == true
-                ? Turn.ThinkingExpanded ?? false          // 协作提示默认收起，用户点开过才展开
+            => !ForceThinkingCollapsed && (IsUser && Notice
+                ? Turn.PhaseExpanded.TryGetValue(NoticePhaseKey, out bool shown) && shown   // 协作提示那一行默认收起，点开过才展开
                 : Phase >= 0
                 ? (Turn.PhaseExpanded.TryGetValue(Phase, out bool expanded) ? expanded : DefaultThinkingExpanded)
                 : Turn.ThinkingExpanded ?? DefaultThinkingExpanded);
+
+        /// <summary>协作提示那一行的折叠状态存进 PhaseExpanded 的专用键：不能借用分段下标（-1 是整轮不分段的条目，
+        /// 整轮的 ThinkingExpanded 又是回答折叠区的默认值，共用一个开关会让点开提示连带展开整轮思考区）。</summary>
+        private const int NoticePhaseKey = int.MinValue;
 
         /// <summary>没交互过的默认值：宿主的设置优先；没设时有时间线（思维与工具交替）就展开，纯推理仍折叠。</summary>
         private bool DefaultThinkingExpanded => Turn.ThinkingExpanded ?? !string.IsNullOrEmpty(Turn.TimelineText);
@@ -2248,7 +2266,8 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
             bool expand = !ThinkingExpanded;
             ForceThinkingCollapsed = false;
             // 每个折叠区各记各的：分段共用一个开关会让后面几段跟着一起开合
-            if (Phase >= 0) Turn.PhaseExpanded[Phase] = expand;
+            if (IsUser && Notice) Turn.PhaseExpanded[NoticePhaseKey] = expand;
+            else if (Phase >= 0) Turn.PhaseExpanded[Phase] = expand;
             else Turn.ThinkingExpanded = expand;
         }
     }

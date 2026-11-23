@@ -155,6 +155,49 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
+        public void Pulse_StopsWhileThinkingExpanded_ResumesAfterCollapse()
+        {
+            var flow = Hosted(out var host);
+            try
+            {
+                var turn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "问题"),
+                    Assistant = new ChatMessage("assistant", ""),
+                    Streaming = true,
+                    ReasoningText = "第一行思路\n用户正在读展开的思维链"
+                };
+                var book = new ChatTurnBook();
+                book.AddTurn(turn);
+                flow.Bind(book);
+                Application.DoEvents();
+
+                flow.PulseFlash();
+                Assert.Equal("用户正在读展开的思维链", turn.FlashText);
+
+                // 展开思考区：正文不再闪，残留的闪存也要收掉
+                turn.ThinkingExpanded = true;
+                book.RaiseChanged();
+                flow.PulseFlash();
+                Application.DoEvents();
+                Assert.Null(turn.FlashText);
+                Assert.NotEqual("用户正在读展开的思维链", AssistantRow(flow)?.BodyBox.Text);
+
+                // 收起：闪现按原节拍恢复
+                turn.ThinkingExpanded = false;
+                book.RaiseChanged();
+                flow.PulseFlash();
+                Application.DoEvents();
+                Assert.Equal("用户正在读展开的思维链", turn.FlashText);
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
+        [StaFact]
         public void Pulse_DoesNothingAfterTurnSettles()
         {
             var flow = Hosted(out var host);

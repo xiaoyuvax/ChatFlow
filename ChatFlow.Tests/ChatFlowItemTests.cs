@@ -234,5 +234,64 @@ namespace ChatFlow.Tests
             Assert.Equal("想二", second.ThinkingText);
             Assert.Equal("思考与工具过程 · 想二", second.ThinkingHeaderText);   // 后续分段只标自己的摘要
         }
+
+        [Fact]
+        public void NoticeTurn_AssistantPhasesFoldIndependently()
+        {
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "【协作提示】同工作区新会话已启动"),
+                Assistant = new ChatMessage("assistant", ""),
+                Notice = true,
+                NoticeKind = "collab",
+                ThinkingExpanded = false
+            };
+            turn.Phases.Add(("想一", ""));
+            turn.Phases.Add(("想二", ""));
+
+            var notice = new ChatFlowItem(turn, ChatFlowItemKind.User);
+            var first = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = 0 };
+            var second = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = 1 };
+
+            notice.ToggleThinking();                       // 点开协作提示正文
+            Assert.True(notice.ThinkingExpanded);
+            Assert.False(first.ThinkingExpanded);          // 提示展开不连带这一轮回答的思考区
+            Assert.False(second.ThinkingExpanded);
+
+            first.ToggleThinking();                        // 回答的思考区各自开合
+            Assert.True(first.ThinkingExpanded);
+            Assert.False(second.ThinkingExpanded);
+            first.ToggleThinking();
+            Assert.False(first.ThinkingExpanded);
+        }
+
+        [Fact]
+        public void Notice_FeedbackShowsFirstLineOnly()
+        {
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "[用户反馈] 对 Loop 表现不满：第一条消息要折叠\r\n第二行不进标题"),
+                Assistant = new ChatMessage("assistant", ""),
+                Notice = true,
+                NoticeKind = "feedback"
+            };
+            var item = new ChatFlowItem(turn, ChatFlowItemKind.User);
+            Assert.Equal("[用户反馈] 对 Loop 表现不满：第一条消息要折叠", item.ThinkingHeaderText);
+            Assert.Equal(string.Empty, item.Text);   // 全文只在折叠区里
+            Assert.False(item.ThinkingExpanded);     // 默认收起
+        }
+
+        [Fact]
+        public void Notice_CollabKeepsLabelAndTruncatesFirstLine()
+        {
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", new string('长', 80)),
+                Notice = true,
+                NoticeKind = "collab"
+            };
+            var item = new ChatFlowItem(turn, ChatFlowItemKind.User);
+            Assert.Equal("协作提示 · " + new string('长', 60) + "…", item.ThinkingHeaderText);
+        }
     }
 }
