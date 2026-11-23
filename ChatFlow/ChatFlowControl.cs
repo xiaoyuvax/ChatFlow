@@ -1853,10 +1853,58 @@ namespace ChatFlow
             }
             resizeDebounce.Stop();
             resizeDebounce.Start();
+            // 拖动过程中的轻量重排：不清缓存、不释放行，只按当前（旧）高度把行摆到新宽度的视口上。
+            // 行内容仍是旧宽度的排版（宽了右侧留白、窄了裁掉行尾），但布局骨架/滚动条跟得上窗口，
+            // 不会出现拖动时下半屏空白、滚动条长度错乱。松手后 debounce 按新宽度精确重排。
+            if (IsHandleCreated && realized.Count > 0 && items.Count > 0 && !inLayout)
+                RepositionOnly();
         }
 
         /// <summary>resize 结束后的重排节流：拖动期间不逐像素全量重排（每次全释放行+重测一屏 markdown）。</summary>
         private System.Windows.Forms.Timer resizeDebounce;
+
+        /// <summary>resize 期间的轻量重排：沿用旧高度把行摆进新视口（不重测、不新建行、不动滚动条长度）。</summary>
+        private void RepositionOnly()
+        {
+            inLayout = true;
+            try
+            {
+                int viewTop = vbar.Visible ? vbar.Value : 0;
+                int viewH = Math.Max(1, ClientSize.Height);
+                int rowWidth = vbar.Visible ? Width - vbar.Width : Width;
+                foreach (var (item, row) in realized.ToArray())
+                {
+                    if (!itemIndex.TryGetValue(item, out int idx)) continue;
+                    int top = prefixSum[idx];
+                    row.SetBounds(0, top - viewTop, rowWidth, prefixSum[idx + 1] - prefixSum[idx]);
+                }
+                foreach (var (item, thinking) in thinkingRows.ToArray())
+                {
+                    if (!itemIndex.TryGetValue(item, out int idx)) continue;
+                    int inset = (int)Math.Round(12 * DeviceDpi / 96.0);
+                    thinking.SetBounds(inset, prefixSum[idx] - viewTop,
+                        Math.Max(40, rowWidth - inset * 2), prefixSum[idx + 1] - prefixSum[idx]);
+                }
+                foreach (var (item, card) in cardRows.ToArray())
+                {
+                    if (!itemIndex.TryGetValue(item, out int idx)) continue;
+                    int inset = (int)Math.Round(12 * DeviceDpi / 96.0);
+                    card.SetBounds(inset, prefixSum[idx] - viewTop,
+                        Math.Max(40, rowWidth - inset * 2), prefixSum[idx + 1] - prefixSum[idx]);
+                }
+                foreach (var (item, linkRow) in linkRows.ToArray())
+                {
+                    if (!itemIndex.TryGetValue(item, out int idx)) continue;
+                    int inset = (int)Math.Round(12 * DeviceDpi / 96.0);
+                    linkRow.SetBounds(inset, prefixSum[idx] - viewTop,
+                        Math.Max(40, rowWidth - inset * 2), prefixSum[idx + 1] - prefixSum[idx]);
+                }
+            }
+            finally
+            {
+                inLayout = false;
+            }
+        }
 
         /// <summary>隐藏时排过版：隐藏状态下 RichEdit 不排版，markdown 散文块量到的只有几十像素，
         /// 后台标签页里收尾的正文就按这个偏小高度落盘，切回来不重测就只剩开头一段、滚到底也看不到末尾。</summary>
