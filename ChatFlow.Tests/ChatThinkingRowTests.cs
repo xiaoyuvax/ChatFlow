@@ -203,6 +203,77 @@ namespace ChatFlow.Tests
             }
         }
 
+        [StaFact]
+        public void Phases_AfterFirstPiece_NoMessageTopPad()
+        {
+            // 回归：「正文之后的思维段」是同一轮的第二条，若也吃整块消息顶部留白，
+            // 两段正文之间就夹出一条空行（用户侧：思维区展开控件上方多一空行）。
+            var turn = new ChatTurn { User = new ChatMessage("user", "测试") };
+            turn.Phases.Add(("第一段思维", "第一段正文"));
+            turn.Phases.Add(("第二段思维", "第二段正文"));
+
+            using var ownerFlow = new ChatFlowControl();
+            using var first = new ChatMessageRow(ownerFlow);
+            using var second = new ChatMessageRow(ownerFlow);
+            var font = new Font("Consolas", 9.75F);
+            var host = new Form();
+            host.Controls.Add(first);
+            host.Controls.Add(second);
+            host.Show();
+            try
+            {
+                var a = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = 0 };
+                var b = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = 1 };
+                int ha = first.Bind(a, font, 600);
+                int hb = second.Bind(b, font, 600);
+                var fa = GetField<WF.Label>(first, "lblThinking");
+                var fb = GetField<WF.Label>(second, "lblThinking");
+
+                Assert.True(fa.Visible && fb.Visible, "两段都有思维，折叠头都应可见");
+                Assert.True(fb.Top < fa.Top, "后续段折叠头紧接上一条，不再留消息顶部留白");
+                Assert.True(hb < ha, $"后续段比首段矮一块顶部留白（首段 {ha} / 后续 {hb}）");
+            }
+            finally
+            {
+                font.Dispose();
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
+        [StaFact]
+        public void Notice_NoMessageTopPad()
+        {
+            // 回归：协作提示整行铺淡黄底，若也吃消息顶部留白，色块会凭空高出一截（用户侧：大面积黄色）。
+            var plain = new ChatTurn { User = new ChatMessage("user", "提示") };
+            var notice = new ChatTurn { User = new ChatMessage("user", "提示"), Notice = true };
+
+            using var ownerFlow = new ChatFlowControl();
+            using var normal = new ChatMessageRow(ownerFlow);
+            using var marked = new ChatMessageRow(ownerFlow);
+            var font = new Font("Consolas", 9.75F);
+            var host = new Form();
+            host.Controls.Add(normal);
+            host.Controls.Add(marked);
+            host.Show();
+            try
+            {
+                int hn = normal.Bind(new ChatFlowItem(plain, ChatFlowItemKind.User), font, 600);
+                int hm = marked.Bind(new ChatFlowItem(notice, ChatFlowItemKind.User), font, 600);
+                var tn = GetField<WF.Control>(normal, "txt");
+                var tm = GetField<WF.Control>(marked, "txt");
+
+                Assert.True(tm.Top < tn.Top, "协作提示不再留消息顶部留白");
+                Assert.True(hm < hn, $"协作提示比普通消息矮一块顶部留白（普通 {hn} / 提示 {hm}）");
+            }
+            finally
+            {
+                font.Dispose();
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
         private static T GetField<T>(object instance, string name) where T : class
             => instance.GetType().GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(instance) as T
                ?? throw new InvalidOperationException($"字段 {name} 不存在或类型不符");

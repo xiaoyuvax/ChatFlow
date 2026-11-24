@@ -250,13 +250,9 @@ namespace ChatFlow
         /// 测量基于本行 FCTB 真实渲染（句柄已创建，WordWrap 生效）。</summary>
         public int Bind(ChatFlowItem item, Font font, int reservedWidth)
         {
-            var __sw = System.Diagnostics.Stopwatch.StartNew();
-            string __log = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "chatflow-bind-probe.txt");
-            void __Mark(string n) { System.IO.File.AppendAllText(__log, $"{n}={__sw.ElapsedMilliseconds} "); __sw.Restart(); }
             _binding = true;
             _contentWidth = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
             UpdateBodyGeometry(item, font, reservedWidth);
-            __Mark("geom");
             // 行表面与勾选框底色：主题切换只重绑（OnAppThemeChanged → Bind），不会重建控件，
             // 池化行上一次主题残留的底色（ChatTheme 对快照后新建的行无从还原）必须在这里重贴
             BackColor = Color.Transparent;
@@ -299,7 +295,6 @@ namespace ChatFlow
             }
             _bodyKey = bodyKey;
             ShowMarkdown(useMarkdown);
-            __Mark("body");
             // 每次绑到 markdown 都补一次重测：池化行复用时上一行的排版状态不算数，
             // 而 SetMarkdown 的换行往往晚于本次测量，行高停在偏小值就会把末尾正文裁掉。
             if (useMarkdown) owner.RequestRelayoutDeferred(this);
@@ -378,6 +373,12 @@ namespace ChatFlow
                     ? MarkdownContentHeight()
                     : txt.TextHeight + txt.Paddings.Vertical + Dip(4);
 
+        /// <summary>本行是否带消息顶部留白：只有一轮的第一条（用户消息、助手首段）与上一轮分开；
+        /// 同一轮正文之后的思维段、超长拆片紧接前一条，再给整块留白就是正文之间夹一条空行；
+        /// 协作提示整行铺底色（见 OnPaint），留白会让淡黄块凭空高出一截。</summary>
+        internal static bool HasTopPad(ChatFlowItem item)
+            => item != null && !item.IsContinuation && !item.Notice && item.Phase <= 0;
+
         /// <summary>本行所需高度（含角色栏与留白）；布局测量唯一出口。</summary>
         private int MeasureRow()
         {
@@ -393,7 +394,7 @@ namespace ChatFlow
                 // 后续分片没有折叠头，只有思考区
                 contentH += ThinkingBoxHeight();
             }
-            int topPad = Item?.IsContinuation == true ? 0 : Dip(MessageTopPad);
+            int topPad = HasTopPad(Item) ? Dip(MessageTopPad) : 0;
             return contentH + topPad + Dip(2) + Dip(RowVPad);
         }
 
@@ -828,13 +829,14 @@ namespace ChatFlow
         /// 必须显式调用（Bind / 尺寸变化 / 思考区可见性切换），不能依赖 OnSizeChanged。</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
-            // 协作提示整行铺淡黄底（圆角内缩一点，别顶到相邻消息）
+            // 协作提示整行铺淡黄底（圆角内缩一点，别顶到相邻消息）。这一行没有顶部留白，
+            // 底色从行顶开始铺，否则内容顶到色块外面。
             if (NoticeBackColor(Item) is { } back)
             {
                 using var path = new System.Drawing.Drawing2D.GraphicsPath();
                 int inset = Dip(MessageTopPad) / 2;
-                var box = new Rectangle(inset, Math.Max(0, inset / 2),
-                    Math.Max(1, Width - inset * 2), Math.Max(1, Height - inset));
+                var box = new Rectangle(inset, 0,
+                    Math.Max(1, Width - inset * 2), Math.Max(1, Height - inset / 2));
                 int d = Math.Max(1, Math.Min(Dip(8) * 2, Math.Min(box.Width, box.Height)));
                 path.AddArc(box.Left, box.Top, d, d, 180, 90);
                 path.AddArc(box.Right - d, box.Top, d, d, 270, 90);
@@ -851,9 +853,8 @@ namespace ChatFlow
         private void LayoutContent()
         {
             chk.SetBounds(Dip(2), Dip(2), Dip(20), Dip(20));
-            bool continuation = Item?.IsContinuation == true;
 
-            int y = (continuation ? 0 : Dip(MessageTopPad)) + Dip(2);
+            int y = (HasTopPad(Item) ? Dip(MessageTopPad) : 0) + Dip(2);
             int contentW = ContentWidth;
             if (thinkingHeaderShown)
             {

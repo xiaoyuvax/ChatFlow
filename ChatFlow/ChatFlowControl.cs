@@ -445,7 +445,7 @@ namespace ChatFlow
                 var item = items[i];
                 if (item.Kind != ChatFlowItemKind.Assistant) continue;
                 if (item.ThinkingText == null || item.IsThinkingContinuation || !item.ThinkingExpanded) continue;
-                int headerY = prefixSum[i] + Dip((item.IsContinuation ? 0 : ChatMessageRow.MessageTopPad) + 2);
+                int headerY = prefixSum[i] + Dip((ChatMessageRow.HasTopPad(item) ? ChatMessageRow.MessageTopPad : 0) + 2);
                 // 长过程会被拆成多片（只有第一片有折叠头）：块的底部要算到同一轮的最后一片
                 int last = i;
                 while (last + 1 < items.Count && items[last + 1].Turn == item.Turn) last++;
@@ -960,7 +960,7 @@ namespace ChatFlow
             // 折叠思考区只显示一行摘要；展开时计入思考区文本
             if (item.ThinkingText != null)
                 lines += item.ThinkingExpanded ? CountLines(item.ThinkingText, perLine) : 1;
-            h = lines * lineH + 2 + 8 + ChatMessageRow.MessageTopPad + 10;
+            h = lines * lineH + 2 + 8 + (ChatMessageRow.HasTopPad(item) ? ChatMessageRow.MessageTopPad : 0) + 10;
             heightCache[item] = h;   // 记忆估算（宽度/字体/结构变化时缓存已清）
             return h;
         }
