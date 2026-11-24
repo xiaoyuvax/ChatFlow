@@ -317,13 +317,13 @@ namespace ChatFlow
             jumpToEndButton = new JumpButton { Visible = false };
             jumpToEndButton.Click += (_, _) => JumpToEnd();
             Controls.Add(jumpToEndButton);
-            jumpTip.SetToolTip(jumpToEndButton, "跳到末尾（回到最新内容并恢复自动跟随）");
+            jumpTip.SetToolTip(jumpToEndButton, "跳到末尾（回到最新内容并恢复自动跟随）；悬停可跳到后面任意一轮的开头");
 
             // 右上角浮动的「回到顶部」按钮：滚离顶部时出现，点了回到第一条
             jumpToTopButton = new JumpButton(up: true) { Visible = false };
             jumpToTopButton.Click += (_, _) => ScrollToTop();
             Controls.Add(jumpToTopButton);
-            jumpTip.SetToolTip(jumpToTopButton, "回到顶部");
+            jumpTip.SetToolTip(jumpToTopButton, "回到顶部；悬停可跳到前面任意一轮的开头");
 
             // 顶部浮动的折叠头替身：长过程滚到看不见原折叠头时，用它就地折叠
             stickyThinking.Click += (_, _) => CollapseStickyThinking();
@@ -331,6 +331,8 @@ namespace ChatFlow
 
             // 拖动滚动条时的轮次刻度与预览浮窗（实现在 ChatFlowControl.ScrollTicks.cs）
             InitializeScrollTicks();
+            // 两个浮动按钮的悬停菜单：列出该方向上的每一轮，点一行跳到那一轮开头
+            InitializeJumpMenu();
 
             // 工具闪现区节拍器：只在流式回合跑（UpdateStreamingMessage 见到流式就起、收尾就停），
             // 免得每个聊天控件都挂一个空转计时器；宿主可用 FlashInterval 调速
@@ -371,6 +373,7 @@ namespace ChatFlow
             if (!settingScrollInternally)
             {
                 autoScrollToEnd = IsAtEnd;
+                HideJumpMenu();   // 用户自己滚了：挂着的轮次菜单不再对应当前位置
                 // 滑块靠近某轮刻线时贴上去；贴住后由递归进来的这次回调负责重排，这里直接交回
                 if (ApplyScrollMagnet()) return;
                 PauseMarkdown();   // 用户正在翻历史：先按纯文本排，停稳后再补 markdown
@@ -383,6 +386,7 @@ namespace ChatFlow
         /// <summary>「跳到末尾」：恢复自动跟随、按真实渲染重测一遍可见行高，再滚到底。</summary>
         private void JumpToEnd()
         {
+            HideJumpMenu();
             RemeasureLayout();   // 末尾正文常留着「量在渲染完成前」的偏小高度，滚到底前补一次
             ScrollToEnd();
             UpdateJumpToEndButton();
@@ -408,6 +412,7 @@ namespace ChatFlow
             int y = Math.Max(0, ClientSize.Height - jumpToEndButton.Height - 10);
             jumpToEndButton.Location = new Point(x, y);
             jumpToEndButton.BringToFront();
+            if (jumpMenu.Visible) LayoutJumpMenu();   // 按钮挪了，挂着的菜单跟着挪
         }
 
         /// <summary>按当前滚动位置显隐并定位「回到顶部」按钮（滚离顶部才显示）。</summary>
@@ -430,6 +435,7 @@ namespace ChatFlow
                 : Dip(4);
             jumpToTopButton.Location = new Point(x, y);
             jumpToTopButton.BringToFront();
+            if (jumpMenu.Visible) LayoutJumpMenu();   // 按钮挪了（替身条让位），挂着的菜单跟着挪
         }
 
         private int Dip(int value) => (int)Math.Round(value * DeviceDpi / 96.0);
@@ -520,6 +526,7 @@ namespace ChatFlow
             if (disposing) markdownDelay.Dispose();
             if (disposing) scrollDragIdle.Dispose();
             if (disposing) flashPulse.Dispose();
+            if (disposing) jumpHoverPoll.Dispose();   // 悬停菜单的轮询：控件销毁就停
             base.Dispose(disposing);
         }
 
@@ -1119,6 +1126,7 @@ namespace ChatFlow
                 inLayout = false;
             }
             UpdateJumpToEndButton();   // 内容/视口变化后同步浮动按钮显隐与位置
+            if (jumpMenu.Visible) LayoutJumpMenu();   // 新实例化的行会盖住浮层：跟着重摆并拉回最上层
             UpdateStickyThinking();    // 折叠头被滚出可见区时，在顶部顶替它
             if (scrollDragging) UpdateScrollDragVisuals();   // 拖动中新实例化的行会盖住刻度/浮窗，拉回最上层
         }
@@ -1550,6 +1558,7 @@ namespace ChatFlow
         /// <summary>回到顶部：暂停自动跟随（用户在看历史），滚到第一条。</summary>
         public void ScrollToTop()
         {
+            HideJumpMenu();
             autoScrollToEnd = false;
             if (!vbar.Visible)
             {
