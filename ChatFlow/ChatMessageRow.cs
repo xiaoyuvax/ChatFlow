@@ -250,9 +250,13 @@ namespace ChatFlow
         /// 测量基于本行 FCTB 真实渲染（句柄已创建，WordWrap 生效）。</summary>
         public int Bind(ChatFlowItem item, Font font, int reservedWidth)
         {
+            var __sw = System.Diagnostics.Stopwatch.StartNew();
+            string __log = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "chatflow-bind-probe.txt");
+            void __Mark(string n) { System.IO.File.AppendAllText(__log, $"{n}={__sw.ElapsedMilliseconds} "); __sw.Restart(); }
             _binding = true;
             _contentWidth = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
             UpdateBodyGeometry(item, font, reservedWidth);
+            __Mark("geom");
             // 行表面与勾选框底色：主题切换只重绑（OnAppThemeChanged → Bind），不会重建控件，
             // 池化行上一次主题残留的底色（ChatTheme 对快照后新建的行无从还原）必须在这里重贴
             BackColor = Color.Transparent;
@@ -295,6 +299,7 @@ namespace ChatFlow
             }
             _bodyKey = bodyKey;
             ShowMarkdown(useMarkdown);
+            __Mark("body");
             // 每次绑到 markdown 都补一次重测：池化行复用时上一行的排版状态不算数，
             // 而 SetMarkdown 的换行往往晚于本次测量，行高停在偏小值就会把末尾正文裁掉。
             if (useMarkdown) owner.RequestRelayoutDeferred(this);
