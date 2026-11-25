@@ -44,6 +44,11 @@ namespace ChatFlow
         // 每轮 RebuildItems 都会给所有可见行重新 Bind，不跳过的话 1 万字一行要重算 ~30ms。
         private string _bodyKey;
         private string _thinkingKey;
+        // 思考区增量重算门：流式期间小增量不整段重排（见 Bind 内注释）
+        private long _thinkingRerenderedAt;
+        private int _thinkingRenderedLength;
+        /// <summary>思考区两次整段重排之间的最小增量（字符）。</summary>
+        internal const int ThinkingRerenderDelta = 4000;
         private bool bodyShown;                  // 正文有文字才占行：没字时只剩角色栏/思考区，不留空白文本框
         private bool thinkingVisible;            // 当前条目是否有思考区
         private bool thinkingHeaderShown;        // 是否显示折叠头（后续分片不显示）
@@ -332,12 +337,19 @@ namespace ChatFlow
             lblThinking.ForeColor = P != null ? P.ForeDim : Color.Gray;
             string thinkingKey = (thinkingBoxShown ? "1|" : "0|") + font + "|" + _contentWidth + "|" + (item.ThinkingText ?? "");
             bool thinkingChanged = thinkingKey != _thinkingKey;
-            if (thinkingBoxShown && item.ThinkingText != null && thinkingChanged)
+            // 流式期间思维链每 250ms 增量一次：整段 ApplyThinking + NeedRecalc(full) 是 O(全文) 的正则+FCTB 重排，
+            // 长思维链（数万字）叠加节拍器会让 UI 线程长时间停摆。增量超过阈值才整段重算，小增量沿用上次排版。
+            bool bigEnough = thinkingChanged
+                && (_thinkingRerenderedAt <= 0
+                    || Math.Abs((item.ThinkingText ?? "").Length - _thinkingRenderedLength) >= ThinkingRerenderDelta);
+            if (thinkingBoxShown && item.ThinkingText != null && bigEnough)
             {
                 txtThinking.SetFontPreserveZoom(GetThinkingFont(font));
                 txtThinking.SetTextCaretEnd(item.ThinkingText);
                 ChatTextStyler.ApplyThinking(txtThinking, item.ThinkingText);
                 txtThinking.ContextMenuStrip = owner.ContextMenuStrip;
+                _thinkingRerenderedAt = Environment.TickCount64;
+                _thinkingRenderedLength = item.ThinkingText.Length;
             }
             if (thinkingBoxShown) _thinkingKey = thinkingKey;
             txtThinking.Visible = thinkingBoxShown;
@@ -356,7 +368,7 @@ namespace ChatFlow
             if (thinkingBoxShown)
             {
                 txtThinking.Width = _contentWidth;
-                if (thinkingChanged)
+                if (bigEnough)
                 {
                     _ = txtThinking.Handle;
                     txtThinking.NeedRecalc(true, true);

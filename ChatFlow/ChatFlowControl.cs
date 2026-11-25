@@ -826,6 +826,27 @@ namespace ChatFlow
         /// <summary>闪现节拍器：流式回合期间运行，回合结束即停（不空转）。</summary>
         private readonly System.Windows.Forms.Timer flashPulse = new() { Interval = DefaultFlashInterval };
 
+        /// <summary>流式更新慢于这个毫秒数就写一条日志：卡顿定位靠实测，不靠猜。</summary>
+        private const int SlowUpdateMs = 1000;
+
+        /// <summary>慢更新留痕：ChatFlow 不依赖宿主日志设施，直接追加到 logs/chatflow-slow.log。</summary>
+        private static void AppLogSlow(string message)
+        {
+            try
+            {
+                // ChatFlow 是共享库不引用宿主：数据目录从环境变量取（宿主已设置），取不到退回 %APPDATA%\OpenLoop
+                string dataRoot = Environment.GetEnvironmentVariable("OPENLOOP_DATA_ROOT");
+                if (string.IsNullOrWhiteSpace(dataRoot))
+                    dataRoot = System.IO.Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "OpenLoop");
+                string dir = System.IO.Path.Combine(dataRoot, "logs");
+                System.IO.Directory.CreateDirectory(dir);
+                System.IO.File.AppendAllText(System.IO.Path.Combine(dir, "chatflow-slow.log"),
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {message}\r\n");
+            }
+            catch { }
+        }
+
         /// <summary>工具闪现区节拍（毫秒，钳在 300–5000）：没有正文、也没有正在执行的工具行时，
         /// 每隔这么久把思维链尾部半行刷进正文 FCTB，让用户看到模型还在干活。
         /// 数值由宿主按账本 limit.flash_interval 注入（可演化）。</summary>
@@ -1649,6 +1670,9 @@ namespace ChatFlow
         /// 避免每 250ms 整表重建把用户往上翻的位置弹走。force=true 跳过节流（阶段切换）。</summary>
         public void UpdateStreamingMessage(ChatTurn turn, string fullText, bool force = false)
         {
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            try
+            {
             // 宿主（Loop / 旁路）只在收尾时写 turn.AssistantText，流式正文只交给这里：
             // 不落到数据上的话助手条目一直不存在，下面 item == null 的分支会每 250ms 整表重建一次
             // （用户侧：正文不显示、一拖滚动条就弹回、选区被清掉）。
@@ -1721,6 +1745,12 @@ namespace ChatFlow
                     r2.PlaceCaretEnd();
             }
             else Relayout();
+            }
+            finally
+            {
+                sw.Stop();
+                if (sw.ElapsedMilliseconds >= SlowUpdateMs) AppLogSlow($"UpdateStreamingMessage force={force} {sw.ElapsedMilliseconds} ms");
+            }
         }
 
         /// <summary>

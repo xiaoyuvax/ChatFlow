@@ -35,11 +35,17 @@ namespace ChatFlow.Tests
                 flow.Bind(book);
                 Application.DoEvents();
 
-                turn.ReasoningText += "\n第二步：读文件。";
+                // 小增量不整段重排（增量门）：文本停在上次重排快照
+                turn.ReasoningText += "\n小增量。";
                 flow.UpdateStreamingMessage(turn, "", force: true);
                 Application.DoEvents();
-
                 var row = RealizedRows(flow).Values.First(r => r.Item?.Kind == ChatFlowItemKind.Assistant);
+                Assert.DoesNotContain("小增量", row.ThinkingBox.Text);
+
+                // 增量达到阈值（ThinkingRerenderDelta）后整段重排，新文本跟上
+                turn.ReasoningText += new string('思', ChatMessageRow.ThinkingRerenderDelta) + "\n第二步：读文件。";
+                flow.UpdateStreamingMessage(turn, "", force: true);
+                Application.DoEvents();
                 Assert.Contains("第二步", row.ThinkingBox.Text);
             }
             finally
@@ -74,7 +80,8 @@ namespace ChatFlow.Tests
                 flow.UpdateStreamingMessage(turn, "", force: true);
                 Application.DoEvents();
 
-                turn.Phases[0] = (turn.Phases[0].Thinking + "【尾部新增】", "");
+                // 尾部增量超过重排阈值：必须跟上流式增量
+                turn.Phases[0] = (turn.Phases[0].Thinking + new string('思', ChatMessageRow.ThinkingRerenderDelta) + "【尾部新增】", "");
                 flow.UpdateStreamingMessage(turn, "", force: true);
                 Application.DoEvents();
 
