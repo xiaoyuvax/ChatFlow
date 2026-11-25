@@ -310,6 +310,16 @@ namespace ChatFlow.Tests
                 book.RaiseChanged();
                 Application.DoEvents();
 
+                // 滚动/改宽会把行先按纯文本出帧、180ms 后才补 markdown（性能取舍）。
+                // 断言前等这次升级完成，否则量到的是中间帧，与产品行为无关。
+                for (int i = 0; i < 40; i++)
+                {
+                    var row = RealizedRows(flow).FirstOrDefault(r => r.Item is { IsUser: false });
+                    if (row is { IsMarkdownRendered: true }) break;
+                    System.Threading.Thread.Sleep(20);
+                    Application.DoEvents();
+                }
+
                 string diag = flow.GetLayoutDiagnostics();
                 Assert.True(flow.AtEnd, diag);
                 var last = RealizedRows(flow).Where(r => r.Item is { IsUser: false })

@@ -1043,12 +1043,13 @@ namespace ChatFlow
             // 所有行在「估算 ↔ 实测」之间来回跳，滚动位置跟着被弹到别处。
             var anchor = CaptureAnchor();
             int width = vbar.Visible ? Width - vbar.Width : Width;
-            Point cursor = PointToClient(Cursor.Position);
             bool changed = false;
             foreach (var (item, row) in realized.ToArray())
             {
-                // 用户正在这段里选字（或鼠标停在上面）：重绑会清掉选区/光标，别动它
-                if (row.IsMarkdownRendered || row.HasTextSelection || row.Bounds.Contains(cursor)) continue;
+                // 只有「用户正在这段里选字」才不动：重绑会清掉选区。
+                // 鼠标只是停在行上不算（曾经按 row.Bounds.Contains(cursor) 跳过，结果被跳过的那行
+                // 永远不会再有下一次升级窗口，鼠标恰好压在聊天区时切回来一直是纯文本）。
+                if (row.IsMarkdownRendered || row.HasTextSelection) continue;
                 if (!ChatMarkdown.UseMarkdown(item.Text, item.Turn.Streaming)) continue;
                 int measured = row.Bind(item, chatFont, width);
                 measuredItems.Add(item);

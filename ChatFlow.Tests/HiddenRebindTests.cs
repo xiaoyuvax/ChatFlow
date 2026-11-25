@@ -54,6 +54,13 @@ namespace ChatFlow.Tests
 
             var prose = Prose(flow);
             Assert.NotNull(prose);
+            // 可见后 RichEdit 的排版是异步的（ContentsResized → 延迟重测）：等它稳定再断言，
+            // 否则量到的是排版前那一帧的偏小值（96 vs 464），断言的是时序而不是行为。
+            for (int i = 0; i < 50 && prose.Height < prose.GetPreferredContentHeight(); i++)
+            {
+                System.Threading.Thread.Sleep(20);
+                WF.Application.DoEvents();
+            }
             Assert.True(prose.Height >= prose.GetPreferredContentHeight(),
                 $"散文块被裁：{prose.Height} < {prose.GetPreferredContentHeight()}");
         }
