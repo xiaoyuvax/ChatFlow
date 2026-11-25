@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace ChatFlow
 {
@@ -63,6 +63,10 @@ namespace ChatFlow
         /// </summary>
         [JsonIgnore]
         public List<(string Thinking, string Answer)> Phases { get; } = [];
+
+        /// <summary>宿主写入的 timeline.Version 快照：分段数据与 timeline 同步时跳过重建。</summary>
+        [JsonIgnore]
+        public int PhasesDirty { get; set; }
 
         /// <summary>
         /// 每段折叠区各自的展开状态（键 = Phases 下标）。整轮的 ThinkingExpanded 只服务不分段的旧数据，
