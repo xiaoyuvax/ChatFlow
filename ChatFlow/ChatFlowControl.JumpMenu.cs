@@ -22,6 +22,12 @@ namespace ChatFlow
         /// <summary>菜单当前服务哪个按钮：true = 顶部按钮（列之前的轮次），false = 末尾按钮（列之后的轮次）。</summary>
         private bool jumpMenuForTop;
 
+        /// <summary>宿主发起的轮次选择（/fork 用）：选中后回调哪一轮；不在选择模式时为空。</summary>
+        private Action<ChatTurn> turnPickerPick;
+
+        /// <summary>当前菜单是宿主发起的轮次选择（不是悬停跳转菜单）：点选走回调，且不跟鼠标离开收起。</summary>
+        private bool turnPickerMode;
+
         /// <summary>悬停轮询：按钮与菜单之间有缝，靠它判「鼠标还在这一带」。</summary>
         private readonly System.Windows.Forms.Timer jumpHoverPoll = new() { Interval = 120 };
 
@@ -48,6 +54,8 @@ namespace ChatFlow
         internal void BeginJumpMenuHover(bool fromTop)
         {
             if (IsDisposed || !vbar.Visible) return;
+            turnPickerMode = false;
+            turnPickerPick = null;
             var entries = BuildJumpMenuItems(fromTop);
             if (entries.Count == 0)
             {
@@ -67,6 +75,46 @@ namespace ChatFlow
         {
             jumpHoverPoll.Stop();
             if (jumpMenu.Visible) jumpMenu.Close();
+            turnPickerMode = false;
+            turnPickerPick = null;
+        }
+
+        /// <summary>
+        /// 宿主用（/fork）：在聊天区底部弹一轮次选择框，点一行回调那一轮，不跳转也不动滚动跟随。
+        /// 清单与滚动条刻度同一口径：只列有用户输入的轮，最近的在最上面（第一行 = 全部上下文）。
+        /// </summary>
+        public void ShowTurnPicker(Action<ChatTurn> pick)
+        {
+            if (IsDisposed || pick == null || DataSource == null) return;
+            var turns = new List<ChatTurn>();
+            foreach (var turn in DataSource.Turns)
+                if (turn?.User != null) turns.Add(turn);
+            if (turns.Count == 0) return;
+
+            var entries = new List<(ChatTurn Turn, string Text)>(turns.Count);
+            for (int i = turns.Count - 1; i >= 0; i--)
+                entries.Add((turns[i], (i + 1) + "/" + turns.Count + " · " + JumpMenuLabel(turns[i])));
+
+            turnPickerMode = true;
+            turnPickerPick = pick;
+            jumpMenuForTop = false;
+            jumpTip.Hide(jumpToEndButton);
+            jumpMenu.Open(entries);
+            LayoutJumpMenu();
+            jumpHoverPoll.Stop();   // 选择框等用户点选：鼠标移开不收起
+        }
+
+        /// <summary>点了菜单某一项：选择模式下回调宿主，悬停菜单模式下照旧跳到那一轮。</summary>
+        private void ActivateTurnMenu(ChatTurn turn)
+        {
+            var pick = turnPickerMode ? turnPickerPick : null;
+            if (pick != null)
+            {
+                HideJumpMenu();
+                pick(turn);
+                return;
+            }
+            JumpToTurn(turn);
         }
 
         /// <summary>点菜单第 index 项：跳到那一轮开头（测试与宿主也可直接调）。</summary>
@@ -126,7 +174,13 @@ namespace ChatFlow
             int height = Math.Min(jumpMenu.PreferredHeight,
                 Math.Max(jumpMenu.RowHeight + Dip(8), ClientSize.Height - Dip(24)));
             int x, y;
-            if (jumpMenuForTop)
+            if (turnPickerMode)
+            {
+                // 宿主轮次选择：底部居中上弹（末尾按钮这时可能不显示，不能拿它当锚点）
+                x = Math.Max(Dip(8), (contentW - width) / 2);
+                y = ClientSize.Height - Dip(8) - height;
+            }
+            else if (jumpMenuForTop)
             {
                 x = Math.Max(Dip(8), Math.Min(anchor.Left + anchor.Width - width, contentW - width - Dip(8)));
                 y = anchor.Bottom + Dip(6);
@@ -252,7 +306,7 @@ namespace ChatFlow
             internal void Activate(int index)
             {
                 if (index < 0 || index >= items.Count) return;
-                Owner?.JumpToTurn(items[index].Turn);
+                Owner?.ActivateTurnMenu(items[index].Turn);
             }
 
             private int IndexAt(int y)

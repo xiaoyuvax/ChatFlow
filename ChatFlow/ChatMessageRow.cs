@@ -53,6 +53,7 @@ namespace ChatFlow
         private bool thinkingVisible;            // 当前条目是否有思考区
         private bool thinkingHeaderShown;        // 是否显示折叠头（后续分片不显示）
         private bool thinkingBoxShown;           // 是否显示思考区文本（不用 Control.Visible：行在池里时父级不可见会误判）
+        private Rectangle _noticeRegion;         // 协作提示答复轮：思考区（折叠头 + 内容）铺淡黄底的范围
         private bool canUndo;
         private bool canCopy;
         private bool actionsShown;
@@ -134,15 +135,18 @@ namespace ChatFlow
 
         private static ChatPalette P => ChatTheme.Current;   // null = 浅色（沿用原配色）
 
-        /// <summary>协作提示的底色（淡黄）；普通行返回 null。设成了透明表示不铺。</summary>
+        /// <summary>协作提示的底色（淡黄）。设成了透明表示不铺。</summary>
+        private static Color? NoticeFill()
+            => P != null && P.NoticeBack != Color.Empty ? P.NoticeBack : Color.FromArgb(0xFF, 0xFF, 0xE0);
+
+        /// <summary>整轮是协作提示（用户那一行与它的答复轮都算）：答复轮的思考区也铺淡黄底，
+        /// 用户一眼能认出这条轮次来自提示并可整块忽略。</summary>
         private static Color? NoticeBackColor(ChatFlowItem item)
-        {
-            if (item?.Notice != true) return null;
-            Color back = P != null && P.NoticeBack != Color.Empty
-                ? P.NoticeBack
-                : Color.FromArgb(0xFF, 0xFF, 0xE0);
-            return back;
-        }
+            => item?.Turn?.Notice == true ? NoticeFill() : null;
+
+        /// <summary>整行铺淡黄底：只有协作提示那一行；答复轮只染思考区，正文保持默认底色。</summary>
+        private static Color? NoticeRowBackColor(ChatFlowItem item)
+            => item?.Notice == true ? NoticeFill() : null;
 
         public ChatMessageRow(ChatFlowControl owner)
         {
@@ -312,18 +316,7 @@ namespace ChatFlow
             txtThinking.ForeColor = P != null ? P.ChatThinkingFore : Color.FromArgb(0x5F, 0x6E, 0x7E);
             // 思考区底色与聊天背景一致，避免 FCTB 出现色块。
             txtThinking.BackColor = owner.BackColor;
-            // 协作提示整行铺淡黄底，文字与折叠头强制深色（浅色记号在深色主题上也不能反白）
-            Color? noticeBack = NoticeBackColor(item);
-            if (noticeBack is { } back)
-            {
-                // 深色主题的淡黄是压暗的一档，文字跟着反白，不然深棕字压在暗黄上看不见
-                Color fore = back.GetBrightness() < 0.5f
-                    ? Color.FromArgb(0xFF, 0xF1, 0xB8)
-                    : Color.FromArgb(0x61, 0x4A, 0x00);
-                lblThinking.ForeColor = fore;
-                txtThinking.ForeColor = fore;
-                txtThinking.BackColor = back;
-            }
+            lblThinking.BackColor = owner.BackColor;
 
             // 思考区：有内容才显示折叠头；执行中的「思考中…」由末尾的动画行统一提示。
             // 长思维链拆片后的后续分片没有折叠头，展开态下直接铺开。
@@ -335,6 +328,18 @@ namespace ChatFlow
                 ? "▼ " + item.ThinkingHeaderText + "（点击折叠）"
                 : "▶ " + item.ThinkingHeaderText + "（点击展开）";
             lblThinking.ForeColor = P != null ? P.ForeDim : Color.Gray;
+            // 协作提示那一行与它的答复轮：思考区铺淡黄底、深色字（深色主题的淡黄压暗一档，文字跟着反白）。
+            // 答复轮只染思考区，正文仍用默认底色：要告知用户的内容才进正文。
+            if (NoticeBackColor(item) is { } back)
+            {
+                Color fore = back.GetBrightness() < 0.5f
+                    ? Color.FromArgb(0xFF, 0xF1, 0xB8)
+                    : Color.FromArgb(0x61, 0x4A, 0x00);
+                lblThinking.ForeColor = fore;
+                lblThinking.BackColor = back;
+                txtThinking.ForeColor = fore;
+                txtThinking.BackColor = back;
+            }
             string thinkingKey = (thinkingBoxShown ? "1|" : "0|") + font + "|" + _contentWidth + "|" + (item.ThinkingText ?? "");
             bool thinkingChanged = thinkingKey != _thinkingKey;
             // 流式期间思维链每 250ms 增量一次：整段 ApplyThinking + NeedRecalc(full) 是 O(全文) 的正则+FCTB 重排，
@@ -387,9 +392,9 @@ namespace ChatFlow
 
         /// <summary>本行是否带消息顶部留白：只有一轮的第一条（用户消息、助手首段）与上一轮分开；
         /// 同一轮正文之后的思维段、超长拆片紧接前一条，再给整块留白就是正文之间夹一条空行；
-        /// 协作提示整行铺底色（见 OnPaint），留白会让淡黄块凭空高出一截。</summary>
+        /// 协作提示整轮（含答复轮）都不留白：提示行整行铺底色，答复轮只有淡黄思考区，留白会让色块凭空高出一截。</summary>
         internal static bool HasTopPad(ChatFlowItem item)
-            => item != null && !item.IsContinuation && !item.Notice && item.Phase <= 0;
+            => item != null && !item.IsContinuation && item.Turn?.Notice != true && item.Phase <= 0;
 
         /// <summary>本行所需高度（含角色栏与留白）；布局测量唯一出口。</summary>
         private int MeasureRow()
@@ -841,25 +846,35 @@ namespace ChatFlow
         /// 必须显式调用（Bind / 尺寸变化 / 思考区可见性切换），不能依赖 OnSizeChanged。</summary>
         protected override void OnPaint(PaintEventArgs e)
         {
-            // 协作提示整行铺淡黄底（圆角内缩一点，别顶到相邻消息）。这一行没有顶部留白，
-            // 底色从行顶开始铺，否则内容顶到色块外面。
-            if (NoticeBackColor(Item) is { } back)
+            // 协作提示那一行整行铺淡黄底（圆角内缩一点，别顶到相邻消息）。这一行没有顶部留白，
+            // 底色从行顶开始铺，否则内容顶到色块外面；答复轮只铺思考区，正文保持默认底色。
+            if (NoticeRowBackColor(Item) is { } back)
             {
-                using var path = new System.Drawing.Drawing2D.GraphicsPath();
                 int inset = Dip(MessageTopPad) / 2;
-                var box = new Rectangle(inset, 0,
-                    Math.Max(1, Width - inset * 2), Math.Max(1, Height - inset / 2));
-                int d = Math.Max(1, Math.Min(Dip(8) * 2, Math.Min(box.Width, box.Height)));
-                path.AddArc(box.Left, box.Top, d, d, 180, 90);
-                path.AddArc(box.Right - d, box.Top, d, d, 270, 90);
-                path.AddArc(box.Right - d, box.Bottom - d, d, d, 0, 90);
-                path.AddArc(box.Left, box.Bottom - d, d, d, 90, 90);
-                path.CloseFigure();
-                using var fill = new SolidBrush(back);
-                e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                e.Graphics.FillPath(fill, path);
+                FillNotice(e.Graphics, new Rectangle(inset, 0,
+                    Math.Max(1, Width - inset * 2), Math.Max(1, Height - inset / 2)), back);
+            }
+            else if (!_noticeRegion.IsEmpty && NoticeBackColor(Item) is { } thinkBack)
+            {
+                FillNotice(e.Graphics, _noticeRegion, thinkBack);
             }
             base.OnPaint(e);
+        }
+
+        /// <summary>把一块区域画成协作提示的淡黄圆角色块。</summary>
+        private void FillNotice(Graphics g, Rectangle box, Color back)
+        {
+            if (box.Width <= 0 || box.Height <= 0) return;
+            using var path = new System.Drawing.Drawing2D.GraphicsPath();
+            int d = Math.Max(1, Math.Min(Dip(8) * 2, Math.Min(box.Width, box.Height)));
+            path.AddArc(box.Left, box.Top, d, d, 180, 90);
+            path.AddArc(box.Right - d, box.Top, d, d, 270, 90);
+            path.AddArc(box.Right - d, box.Bottom - d, d, d, 0, 90);
+            path.AddArc(box.Left, box.Bottom - d, d, d, 90, 90);
+            path.CloseFigure();
+            using var fill = new SolidBrush(back);
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            g.FillPath(fill, path);
         }
 
         private void LayoutContent()
@@ -958,6 +973,24 @@ namespace ChatFlow
             if (!markdownMode) txt.BringToFront();
             btnUndo.BringToFront();
             btnCopy.BringToFront();
+
+            // 协作提示答复轮：只有思考区（折叠头 + 内容）铺淡黄底，正文保持默认底色。
+            // 放在布局末尾：宽度变化（OnSizeChanged）也要跟着更新色块范围。
+            _noticeRegion = Rectangle.Empty;
+            if (Item?.IsUser == false && Item.Turn?.Notice == true)
+            {
+                var box = Rectangle.Empty;
+                if (thinkingHeaderShown) box = lblThinking.Bounds;
+                if (thinkingBoxShown)
+                    box = box.IsEmpty ? txtThinking.Bounds : Rectangle.Union(box, txtThinking.Bounds);
+                if (!box.IsEmpty)
+                {
+                    // 与协作提示那一行的色块同宽（提示整行按 MessageTopPad/2 内缩）
+                    int inset = Dip(MessageTopPad) / 2;
+                    _noticeRegion = new Rectangle(inset, box.Top,
+                        Math.Max(1, Width - inset * 2), box.Height);
+                }
+            }
         }
 
 #if NET8_0_OR_GREATER

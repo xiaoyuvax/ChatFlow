@@ -293,5 +293,20 @@ namespace ChatFlow.Tests
             var item = new ChatFlowItem(turn, ChatFlowItemKind.User);
             Assert.Equal("协作提示 · " + new string('长', 60) + "…", item.ThinkingHeaderText);
         }
+
+        [Fact]
+        public void Notice_HostShowsHostLabel()
+        {
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "用户在工作区 Harness 配置窗体里点了「让Agent辅助我配置」"),
+                Notice = true,
+                NoticeKind = "host"
+            };
+            var item = new ChatFlowItem(turn, ChatFlowItemKind.User);
+            Assert.Equal("宿主提示 · 用户在工作区 Harness 配置窗体里点了「让Agent辅助我配置」",
+                item.ThinkingHeaderText);
+            Assert.False(item.ThinkingExpanded);   // 默认收起，与其它自动提示一致
+        }
     }
 }

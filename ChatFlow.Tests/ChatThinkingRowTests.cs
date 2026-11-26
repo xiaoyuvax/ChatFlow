@@ -274,6 +274,52 @@ namespace ChatFlow.Tests
             }
         }
 
+        [StaFact]
+        public void NoticeReply_FillsThinkingOnly_AndHasNoTopPad()
+        {
+            // 协作提示的答复轮：思考区铺淡黄底（与提示同一格式，用户可整块跳过），正文保持默认底色。
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "【协作提示】私信"),
+                Assistant = new ChatMessage("assistant", ""),
+                Notice = true,
+                ThinkingExpanded = true,
+                ReasoningText = "想一下"
+            };
+            var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
+            Assert.False(ChatMessageRow.HasTopPad(item), "协作提示答复轮不留消息顶部空行");
+
+            using var ownerFlow = new ChatFlowControl();
+            using var row = new ChatMessageRow(ownerFlow);
+            var font = new Font("Consolas", 9.75F);
+            var host = new Form();
+            host.Controls.Add(row);
+            host.Show();
+            try
+            {
+                row.Bind(item, font, 600);
+                var lbl = GetField<WF.Label>(row, "lblThinking");
+                var txt = GetField<WF.Control>(row, "txt");
+                var region = (System.Drawing.Rectangle)typeof(ChatMessageRow)
+                    .GetField("_noticeRegion", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .GetValue(row);
+                System.Drawing.Color fill = ChatTheme.Current != null && ChatTheme.Current.NoticeBack != System.Drawing.Color.Empty
+                    ? ChatTheme.Current.NoticeBack
+                    : System.Drawing.Color.FromArgb(0xFF, 0xFF, 0xE0);
+
+                Assert.Equal(fill, lbl.BackColor);       // 思考区（折叠头）铺淡黄底
+                Assert.NotEqual(fill, txt.BackColor);    // 正文保持默认底色
+                Assert.False(region.IsEmpty, "答复轮应有思考区色块范围");
+                Assert.True(region.Bottom <= row.Height, "色块不能超出本行");
+            }
+            finally
+            {
+                font.Dispose();
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
         private static T GetField<T>(object instance, string name) where T : class
             => instance.GetType().GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(instance) as T
                ?? throw new InvalidOperationException($"字段 {name} 不存在或类型不符");

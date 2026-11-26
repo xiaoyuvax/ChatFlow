@@ -650,8 +650,10 @@ namespace ChatFlow
             var message = new ChatFlowItem(turn, ChatFlowItemKind.Assistant) { Phase = phase };
             string answer = message.Text;
             string thinking = message.ThinkingText;
-            if (turn.Streaming && answer.Length == 0 && thinking == null && message.Text.Length == 0)
-                return null;   // 还没出字、也没思考区也没闪现内容：这一行只会是「空白文本框」
+            // 正文与思考区都没有：不占位（流式中把位置留给末尾指示行；已收尾的空轮次如被「立即」
+            // 消息顶替的，也不该留一条空白助手条）
+            if (answer.Length == 0 && thinking == null)
+                return null;
 
             if (thinking != null && thinking.Length > MaxItemChars && message.ThinkingExpanded)
             {
@@ -732,9 +734,9 @@ namespace ChatFlow
                             ChatFlowItem last = null;
                             for (int p = 0; p < turn.Phases.Count; p++)
                                 last = AddAssistantPiece(turn, p) ?? last;
-                            lastMessage = last;
+                            if (last != null) lastMessage = last;
                         }
-                        else lastMessage = AddAssistantPiece(turn, -1);
+                        else lastMessage = AddAssistantPiece(turn, -1) ?? lastMessage;
                     }
                     if (lastMessage != null) lastMessage.IsPairEnd = true;
 
@@ -2333,6 +2335,8 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
         {
             "mention" => "会话私信",
             "puppet" => "Puppet 动作",
+            // 壳自己塞进来的开场指令（如「让Agent辅助我配置」）：不是用户敲的
+            "host" => "宿主提示",
             // 用户反馈（/complain、/debug）正文自带 [用户反馈] 标签，标题直接用首行
             "feedback" => "",
             _ => "协作提示"

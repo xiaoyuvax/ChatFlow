@@ -203,5 +203,43 @@ namespace ChatFlow.Tests
                 host.Dispose();
             }
         }
+
+        [StaFact]
+        public void ShowTurnPicker_ListsAllUserTurnsNewestFirst_AndPicksOne()
+        {
+            var flow = Host(out var host);
+            try
+            {
+                flow.Bind(Book(5));
+                Pump(400);
+                ChatTurn picked = null;
+                flow.ShowTurnPicker(turn => picked = turn);
+                Pump(120);
+                Assert.True(flow.JumpMenuVisible);
+
+                var menu = (Control)Field(flow, "jumpMenu");
+                // 上弹：完整落在控件底部一侧
+                Assert.True(menu.Bottom <= flow.ClientSize.Height);
+                Assert.True(menu.Top > flow.ClientSize.Height / 2);
+                Assert.True(menu.Right <= flow.ClientSize.Width);
+
+                var texts = flow.JumpMenuTexts;
+                Assert.Equal(5, texts.Count);
+                Assert.StartsWith("5/5 · ", texts[0]);            // 最近的一轮在最上面 = 全部上下文
+                Assert.Contains("第 5 个问题", texts[0]);
+                Assert.StartsWith("1/5 · ", texts[4]);
+
+                flow.ClickJumpMenuItem(2);                        // 从上往下第 3 行 = 第 3 轮
+                Pump(120);
+                Assert.False(flow.JumpMenuVisible);
+                Assert.NotNull(picked);
+                Assert.StartsWith("第 3 个问题", picked.UserText);
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
     }
 }

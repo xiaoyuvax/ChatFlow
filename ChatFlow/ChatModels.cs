@@ -85,6 +85,10 @@ namespace ChatFlow
         [JsonIgnore]
         public string NoticeKind { get; set; } = string.Empty;
 
+        /// <summary>被用户的「立即」消息顶替（不是停止）：收尾时不补「（已停止）」之类占位文案。</summary>
+        [JsonIgnore]
+        public bool Superseded { get; set; }
+
         [JsonIgnore]
         public int ToolStepCount { get; set; }
 
