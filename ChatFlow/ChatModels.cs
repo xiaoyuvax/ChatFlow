@@ -109,7 +109,7 @@ namespace ChatFlow
         [JsonIgnore]
         public string ToolStatusText { get; set; }
 
-        /// <summary>工具闪现区内容（思维链尾部半行）：没有正文、也没有正在执行的工具行时，
+        /// <summary>工具闪现区内容（思维链尾部半行）：没有正文、也没有工具行时，
         /// 由 ChatFlowControl 按节拍算好写进来，正文 FCTB 直接显示它。
         /// 宿主不写这个字段；只在流式期间有意义，落盘时丢弃。</summary>
         [JsonIgnore]
@@ -124,8 +124,33 @@ namespace ChatFlow
                 : ToolStatusText + "\n" + line;
         }
 
-        /// <summary>一批工具收尾：正文区的执行中提示整批清除。</summary>
-        public void ToolsFinished() => ToolStatusText = null;
+        /// <summary>一批工具收尾：正文区的执行中提示整批清除，残留的思维链闪现一并让位给工具行。</summary>
+        public void ToolsFinished()
+        {
+            ToolStatusText = null;
+            FlashText = null;
+        }
+
+        /// <summary>最近一条已完成的工具行（整轮累计里最后一行非空文本）；没有返回 null。
+        /// 正文区在没有正文时的兜底显示：思维链尾部闪现还没算出来（或工具行刚变化）时显示它。</summary>
+        [JsonIgnore]
+        public string LastToolLine
+        {
+            get
+            {
+                string lines = ToolCallLines;
+                if (string.IsNullOrEmpty(lines)) return null;
+                int end = lines.Length;
+                while (end > 0)
+                {
+                    int start = lines.LastIndexOf('\n', end - 1) + 1;
+                    string line = lines[start..end].Trim();
+                    if (line.Length > 0) return line;
+                    end = start - 1;
+                }
+                return null;
+            }
+        }
 
         /// <summary>是否有思考区内容（决定折叠头是否显示）。</summary>
         [JsonIgnore]
@@ -154,6 +179,22 @@ namespace ChatFlow
             get => User?.Text ?? string.Empty;
             set { if (User != null) User.Text = value; }
         }
+
+        /// <summary>宿主拼在用户消息前面的说明块（技能展开、TCF 启用提示）：界面按宿主消息样式单独显示；
+        /// 文本本身仍整条作为这一轮的用户消息，只是正文区只画用户自己写的部分。</summary>
+        [JsonIgnore]
+        public string HostPrefix { get; set; } = string.Empty;
+
+        /// <summary>用户自己写的那段（去掉宿主说明块）；正文与「最宽行」都按它算。</summary>
+        [JsonIgnore]
+        public string UserBody
+            => HostPrefix.Length > 0 && UserText.StartsWith(HostPrefix, StringComparison.Ordinal)
+                ? UserText[HostPrefix.Length..].TrimStart('\r', '\n')
+                : UserText;
+
+        /// <summary>宿主说明块单独显示时用的那一轮（缓存：重建条目后展开/收起状态还在）。</summary>
+        [JsonIgnore]
+        public ChatTurn HostView { get; set; }
 
         [JsonIgnore]
         public string AssistantText

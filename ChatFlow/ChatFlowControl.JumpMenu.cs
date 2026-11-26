@@ -161,8 +161,8 @@ namespace ChatFlow
             return result;
         }
 
-        /// <summary>菜单标题：用户输入的一行摘要（换行压平，超长截断加省略号）。</summary>
-        private static string JumpMenuLabel(ChatTurn turn) => CompactPreview(turn?.UserText, JumpMenuChars);
+        /// <summary>菜单标题：用户输入的一行摘要（换行压平，超长截断加省略号；宿主说明块不算用户输入）。</summary>
+        private static string JumpMenuLabel(ChatTurn turn) => CompactPreview(turn?.UserBody, JumpMenuChars);
 
         /// <summary>菜单定位：顶部按钮的菜单排在按钮下方、右边缘对齐；末尾按钮的排在按钮上方、水平居中。</summary>
         private void LayoutJumpMenu()

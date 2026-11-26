@@ -261,7 +261,7 @@ namespace ChatFlow
             if (!ReferenceEquals(previewTurn, turn))
             {
                 previewTurn = turn;
-                previewText = CompactPreview(turn.UserText, ScrollPreviewChars);
+                previewText = CompactPreview(turn.UserBody, ScrollPreviewChars);
             }
             scrollPreview.Caption = previewCaption;
             scrollPreview.Body = previewText;

@@ -155,6 +155,47 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
+        public void Pulse_HoldsToolLineForTwoPulses_ThenLetsThinkingTakeOver()
+        {
+            var flow = Hosted(out var host);
+            try
+            {
+                flow.FlashInterval = ChatFlowControl.FlashMinInterval;   // 300ms → 窗口 600ms
+                var turn = new ChatTurn
+                {
+                    User = new ChatMessage("user", "问题"),
+                    Assistant = new ChatMessage("assistant", ""),
+                    Streaming = true,
+                    ReasoningText = "正在想",
+                    ToolCallLines = " >> Read[path=a.cs]\n >> Grep[pattern=b]"
+                };
+                var book = new ChatTurnBook();
+                book.AddTurn(turn);
+                flow.Bind(book);
+                Application.DoEvents();
+
+                // 工具批次收尾（没有正在执行的行）：窗口内正文留在最近一条工具行，思维链不抢位
+                turn.ToolsFinished();
+                flow.PulseFlash();
+                Application.DoEvents();
+                Assert.Null(turn.FlashText);
+                Assert.Equal(">> Grep[pattern=b]", AssistantRow(flow).BodyBox.Text);
+
+                // 两个节拍都过去仍是纯思考：思维链尾部接管，工具行让位
+                Thread.Sleep(flow.FlashInterval * ChatFlowControl.FlashToolHoldPulses + 100);
+                flow.PulseFlash();
+                Application.DoEvents();
+                Assert.Equal("正在想", turn.FlashText);
+                Assert.Equal("正在想", AssistantRow(flow).BodyBox.Text);
+            }
+            finally
+            {
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
+        [StaFact]
         public void Pulse_StopsWhileThinkingExpanded_ResumesAfterCollapse()
         {
             var flow = Hosted(out var host);

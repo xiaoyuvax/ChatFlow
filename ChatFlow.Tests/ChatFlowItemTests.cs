@@ -59,7 +59,7 @@ namespace ChatFlow.Tests
         }
 
         [Fact]
-        public void Text_StreamingKeepsToolCallLinesOutOfBody()
+        public void Text_StreamingShowsLastToolLineNotWholeTrace()
         {
             var turn = new ChatTurn
             {
@@ -69,7 +69,8 @@ namespace ChatFlow.Tests
                 Streaming = true
             };
             var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
-            Assert.True(string.IsNullOrEmpty(item.Text), $"流式期间正文不应含工具行，实为：{item.Text}");
+            // 闪现还没算出来（工具行刚变化）时正文只留最近一条工具行，不整段回放
+            Assert.Equal("» puppet_get(name=MainForm)", item.Text);
 
             turn.Streaming = false;
             Assert.True(string.IsNullOrEmpty(item.Text));

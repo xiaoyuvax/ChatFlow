@@ -704,6 +704,16 @@ namespace ChatFlow
             return message;
         }
 
+        /// <summary>宿主说明块单独成一条（复用协作提示的折叠与淡黄底）：不挂在真实轮次上，
+        /// 选中/撤回/回滚不会把它当成用户发过的话。</summary>
+        private static ChatTurn HostTurn(ChatTurn turn) => new()
+        {
+            User = new ChatMessage("user", turn.HostPrefix),
+            Notice = true,
+            NoticeKind = "host",
+            ThinkingExpanded = turn.ThinkingExpanded
+        };
+
         private void RebuildItems()
         {
             if (suspendRendering) { renderDirty = true; return; }
@@ -722,6 +732,15 @@ namespace ChatFlow
                     ChatFlowItem lastMessage = null;
                     if (turn.User != null)
                     {
+                        // 宿主说明块单独成一条：复用协作提示的折叠与淡黄底，正文只留用户自己写的那段
+                        if (!string.IsNullOrEmpty(turn.HostPrefix))
+                        {
+                            // 缓存那一轮：重建后点开的说明块不会又收回去
+                            if (turn.HostView == null
+                                || !string.Equals(turn.HostView.UserText, turn.HostPrefix, StringComparison.Ordinal))
+                                turn.HostView = HostTurn(turn);
+                            items.Add(new ChatFlowItem(turn.HostView, ChatFlowItemKind.User));
+                        }
                         lastMessage = new ChatFlowItem(turn, ChatFlowItemKind.User);
                         items.Add(lastMessage);
                     }
@@ -825,8 +844,17 @@ namespace ChatFlow
         /// <summary>尾部测量上限（字符）：半行远用不到这么多，只为压住排版测量开销。</summary>
         private const int FlashTailMaxChars = 240;
 
+        /// <summary>工具行落定后的独占拍数：这段时间正文留给工具行，之后才轮到思维链尾部接管。
+        /// 两个节拍（默认 500ms 一拍即 1s）——工具行刚跑完就被思维链顶掉，用户根本看不清。</summary>
+        public const int FlashToolHoldPulses = 2;
+
         /// <summary>闪现节拍器：流式回合期间运行，回合结束即停（不空转）。</summary>
         private readonly System.Windows.Forms.Timer flashPulse = new() { Interval = DefaultFlashInterval };
+
+        /// <summary>工具行独占窗口的判定依据：哪一轮、哪一行、什么时候第一次看到它。</summary>
+        private ChatTurn flashToolTurn;
+        private string flashToolLine;
+        private long flashToolAt;
 
         /// <summary>流式更新慢于这个毫秒数就写一条日志：卡顿定位靠实测，不靠猜。</summary>
         private const int SlowUpdateMs = 1000;
@@ -849,7 +877,7 @@ namespace ChatFlow
             catch { }
         }
 
-        /// <summary>工具闪现区节拍（毫秒，钳在 300–5000）：没有正文、也没有正在执行的工具行时，
+        /// <summary>工具闪现区节拍（毫秒，钳在 300–5000）：没有正文、也没有工具行（执行中 / 本回合最近一条）时，
         /// 每隔这么久把思维链尾部半行刷进正文 FCTB，让用户看到模型还在干活。
         /// 数值由宿主按账本 limit.flash_interval 注入（可演化）。</summary>
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
@@ -865,11 +893,26 @@ namespace ChatFlow
             if (IsDisposed || suspendRendering || DataSource == null) { flashPulse.Stop(); return; }
             var turn = DataSource.Turns.LastOrDefault();
             if (turn == null) { flashPulse.Stop(); return; }
-            // 正文已出字、或正在执行工具：让位给正文/工具行，这时候闪回去只会盖掉有用信息；
+            // 正文已出字、或已有工具行（执行中 / 本回合最近的已完成行）：让位给正文/工具行；
+            // 思维链尾部只是「没有别的东西可看」时的替代，不能盖掉工具行（用户反馈：思维链文本淹没工具行）。
+            // 工具行刚变化时给它两个节拍的独占窗口：跑完立刻被思维链顶掉等于没显示；
+            // 窗口过后仍是纯思考，才让思维链尾部接管，下一条工具行一到立刻夺回。
             // 思考区展开着也别闪（用户正在读，正文再刷一份尾部只是重复）；收起后自然恢复。
             // 回合已结束（停止/失败/正常收尾）也不再闪，顺手把残留的闪现存掉。
+            string toolLine = turn.LastToolLine;
+            if (!ReferenceEquals(turn, flashToolTurn) || !string.Equals(toolLine, flashToolLine, StringComparison.Ordinal))
+            {
+                flashToolTurn = turn;
+                flashToolLine = toolLine;
+                flashToolAt = Environment.TickCount64;
+                // 新工具行一到立刻夺回正文：残留的思维链闪现（Text 里优先于工具行）不能盖住它
+                if (toolLine != null) turn.FlashText = null;
+            }
+            bool toolHolds = toolLine != null
+                             && Environment.TickCount64 - flashToolAt < (long)FlashInterval * FlashToolHoldPulses;
             string flash = turn.Streaming && string.IsNullOrEmpty(turn.AssistantText)
                                                  && string.IsNullOrEmpty(turn.ToolStatusText)
+                                                 && !toolHolds
                                                  && !LatestThinkingExpanded(turn)
                 ? TailHalfLine(turn.ReasoningText, chatFont, RowTextWidth / 2)
                 : null;
@@ -2241,8 +2284,9 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
 
         /// <summary>展示文本：助手条目在正文前附上可见的工具调用行（每次调用一行），示意 Agent 发起了工具/助理调用。
         /// 流式期间**不堆积已完成工具行**（历史 bug：正文底部堆到 11 行，与思考区轨迹重复）——正文为空时
-        /// 只显示正在执行的工具行（<see cref="ChatTurn.ToolStatusText"/>，并行批次多行齐显、整批清除），
-        /// 避免长耗时工具（生图等）期间界面只有「思考中……」而无任何说明；执行结束后一次性前置完整工具行。</summary>
+        /// 先显示正在执行的工具行（<see cref="ChatTurn.ToolStatusText"/>，并行批次多行齐显、整批清除），
+        /// 其次思维链尾部闪现（工具行独占窗口过后才有），两者都没有才退到本回合最近的工具行
+        /// （<see cref="ChatTurn.LastToolLine"/>）；执行结束后一次性前置完整工具行。</summary>
         public string Text
         {
             get
@@ -2254,15 +2298,16 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
                 if (Phase >= 0)
                 {
                     string phaseAnswer = Phase < Turn.Phases.Count ? Turn.Phases[Phase].Answer : string.Empty;
-                    // 末段正文还没出字时，正文区照旧显示正在执行的工具行（与不分段时的流式分支一致）
+                    // 末段正文还没出字时，正文区照旧显示工具行（执行中的行优先，其次思维链尾部闪现），
+                    // 两者都没有才退到本回合最近的工具行（与不分段时的流式分支一致）
                     if (phaseAnswer.Length == 0 && Turn.Streaming && Phase == Turn.Phases.Count - 1)
-                        return Turn.ToolStatusText ?? Turn.FlashText ?? string.Empty;
+                        return Turn.ToolStatusText ?? Turn.FlashText ?? Turn.LastToolLine ?? string.Empty;
                     return phaseAnswer;
                 }
-                if (IsUser) return Turn.UserText;
+                if (IsUser) return Turn.UserBody;
                 if (Turn.Streaming)
                     return !string.IsNullOrEmpty(Turn.AssistantText) ? Turn.AssistantText
-                        : Turn.ToolStatusText ?? Turn.FlashText ?? string.Empty;
+                        : Turn.ToolStatusText ?? Turn.FlashText ?? Turn.LastToolLine ?? string.Empty;
                 // 正文只放答复；思维链与工具轨迹进思考区（FCTB，默认折叠）
                 return Turn.AssistantText;
             }

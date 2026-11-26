@@ -320,6 +320,51 @@ namespace ChatFlow.Tests
             }
         }
 
+        [StaFact]
+        public void FeedbackNoticeReply_KeepsThinkingUnfilled()
+        {
+            // 用户反馈（/complain）是宿主消息：答复属于会话正题，思考区不沿用提示行的淡黄底
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "[用户反馈] 对 Loop 表现不满"),
+                Assistant = new ChatMessage("assistant", ""),
+                Notice = true,
+                NoticeKind = "feedback",
+                ThinkingExpanded = true,
+                ReasoningText = "想一下"
+            };
+            var item = new ChatFlowItem(turn, ChatFlowItemKind.Assistant);
+
+            using var ownerFlow = new ChatFlowControl();
+            using var row = new ChatMessageRow(ownerFlow);
+            var font = new Font("Consolas", 9.75F);
+            var host = new Form();
+            host.Controls.Add(row);
+            host.Show();
+            try
+            {
+                row.Bind(item, font, 600);
+                var lbl = GetField<WF.Label>(row, "lblThinking");
+                var thinking = GetField<WF.Control>(row, "txtThinking");
+                var region = (System.Drawing.Rectangle)typeof(ChatMessageRow)
+                    .GetField("_noticeRegion", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+                    .GetValue(row);
+                System.Drawing.Color fill = ChatTheme.Current != null && ChatTheme.Current.NoticeBack != System.Drawing.Color.Empty
+                    ? ChatTheme.Current.NoticeBack
+                    : System.Drawing.Color.FromArgb(0xFF, 0xFF, 0xE0);
+
+                Assert.NotEqual(fill, lbl.BackColor);
+                Assert.NotEqual(fill, thinking.BackColor);
+                Assert.True(region.IsEmpty, "反馈轮答复不铺淡黄底");
+            }
+            finally
+            {
+                font.Dispose();
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
         private static T GetField<T>(object instance, string name) where T : class
             => instance.GetType().GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)?.GetValue(instance) as T
                ?? throw new InvalidOperationException($"字段 {name} 不存在或类型不符");

@@ -139,10 +139,15 @@ namespace ChatFlow
         private static Color? NoticeFill()
             => P != null && P.NoticeBack != Color.Empty ? P.NoticeBack : Color.FromArgb(0xFF, 0xFF, 0xE0);
 
-        /// <summary>整轮是协作提示（用户那一行与它的答复轮都算）：答复轮的思考区也铺淡黄底，
-        /// 用户一眼能认出这条轮次来自提示并可整块忽略。</summary>
+        /// <summary>答复轮的思考区要不要铺淡黄底：只有别的 agent 发来的协作提示才染（那是它与会话主题无关的
+        /// 私下反思）。宿主提示（host）与用户反馈（feedback）是用户侧输入，答复属于会话正题，按普通轮次显示。</summary>
+        private static bool NoticeTintsThinking(ChatFlowItem item)
+            => item?.Turn?.Notice == true
+               && (item.Turn.NoticeKind ?? "").Trim().ToLowerInvariant() is not ("host" or "feedback");
+
+        /// <summary>协作提示的答复轮只染思考区（提示行本身整行染，见 <see cref="NoticeRowBackColor"/>）。</summary>
         private static Color? NoticeBackColor(ChatFlowItem item)
-            => item?.Turn?.Notice == true ? NoticeFill() : null;
+            => NoticeTintsThinking(item) ? NoticeFill() : null;
 
         /// <summary>整行铺淡黄底：只有协作提示那一行；答复轮只染思考区，正文保持默认底色。</summary>
         private static Color? NoticeRowBackColor(ChatFlowItem item)
@@ -285,7 +290,10 @@ namespace ChatFlow
 #endif
             // 提示词块整段缩进后再上样式（缩进只作用于显示文本，模型原文不动）
             string body = ChatTextStyler.IndentPromptBlocks(item.Text);
-            string bodyKey = (useMarkdown ? "md|" : "txt|") + font + "|" + _bodyWidth + "|" + _bodyLeft + "|" + body;
+            // 流式与收尾用不同的 key：长回复退回纯文本时，两段文本相同，只有收尾那一次才会
+            // 补表格填充与隐藏标记（流式中源码还在变，不能改）
+            string bodyKey = (useMarkdown ? "md|" : "txt|") + (item.Turn.Streaming ? "s|" : "d|")
+                             + font + "|" + _bodyWidth + "|" + _bodyLeft + "|" + body;
             bool bodyChanged = bodyKey != _bodyKey;
             if (useMarkdown)
             {
@@ -977,7 +985,7 @@ namespace ChatFlow
             // 协作提示答复轮：只有思考区（折叠头 + 内容）铺淡黄底，正文保持默认底色。
             // 放在布局末尾：宽度变化（OnSizeChanged）也要跟着更新色块范围。
             _noticeRegion = Rectangle.Empty;
-            if (Item?.IsUser == false && Item.Turn?.Notice == true)
+            if (Item?.IsUser == false && NoticeTintsThinking(Item))
             {
                 var box = Rectangle.Empty;
                 if (thinkingHeaderShown) box = lblThinking.Bounds;
