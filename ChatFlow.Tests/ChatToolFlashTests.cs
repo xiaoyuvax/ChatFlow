@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Reflection;
 using FastColoredTextBoxNS.Text;
 using Xunit;

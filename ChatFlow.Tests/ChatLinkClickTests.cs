@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using FastColoredTextBoxNS;
 using Xunit;
 using ChatFlow;

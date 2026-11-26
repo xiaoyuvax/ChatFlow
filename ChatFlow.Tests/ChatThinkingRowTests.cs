@@ -1,4 +1,4 @@
-using Xunit;
+﻿using Xunit;
 using ChatFlow;
 using WF = System.Windows.Forms;
 
@@ -265,6 +265,44 @@ namespace ChatFlow.Tests
 
                 Assert.True(tm.Top < tn.Top, "协作提示不再留消息顶部留白");
                 Assert.True(hm < hn, $"协作提示比普通消息矮一块顶部留白（普通 {hn} / 提示 {hm}）");
+            }
+            finally
+            {
+                font.Dispose();
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
+        [StaFact]
+        public void NoticeRow_HeaderAndTextUseNoticeFill()
+        {
+            // 回归：/agentsmd 等宿主提示（kind=host）整行铺淡黄底，折叠头却仍是默认白底，色块里开一个白洞。
+            var turn = new ChatTurn
+            {
+                User = new ChatMessage("user", "[宿主提示] 按这条要求改 AGENTS.md"),
+                Notice = true,
+                NoticeKind = "host",
+                ThinkingExpanded = true,
+            };
+
+            using var ownerFlow = new ChatFlowControl();
+            using var row = new ChatMessageRow(ownerFlow);
+            var font = new Font("Consolas", 9.75F);
+            var host = new Form();
+            host.Controls.Add(row);
+            host.Show();
+            try
+            {
+                row.Bind(new ChatFlowItem(turn, ChatFlowItemKind.User), font, 600);
+                var lbl = GetField<WF.Label>(row, "lblThinking");
+                var thinking = GetField<WF.Control>(row, "txtThinking");
+                System.Drawing.Color fill = ChatTheme.Current != null && ChatTheme.Current.NoticeBack != System.Drawing.Color.Empty
+                    ? ChatTheme.Current.NoticeBack
+                    : System.Drawing.Color.FromArgb(0xFF, 0xFF, 0xE0);
+
+                Assert.Equal(fill, lbl.BackColor);       // 折叠头与整行同色
+                Assert.Equal(fill, thinking.BackColor);  // 展开后的全文也不开白底
             }
             finally
             {

@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using Xunit;
 using ChatFlow;
 using WF = System.Windows.Forms;

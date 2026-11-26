@@ -1,8 +1,8 @@
-using System.Text.RegularExpressions;
+﻿using System.Text.RegularExpressions;
 
 namespace ChatFlow
 {
-    internal static class ChatMarkdown
+    public static class ChatMarkdown
     {
         private static readonly Regex Heading = new(@"^\s{0,3}#{1,6}\s+\S", RegexOptions.Compiled);
         private static readonly Regex Fence = new(@"^\s*(```|~~~)", RegexOptions.Compiled);
@@ -11,6 +11,34 @@ namespace ChatFlow
         private static readonly Regex ThematicBreak = new(@"^\s{0,3}((\*\s*){3,}|(-\s*){3,}|(_\s*){3,})$", RegexOptions.Compiled);
         private static readonly Regex ListItem = new(@"^\s{0,3}([-*+]|\d{1,9}[.)])\s+\S", RegexOptions.Compiled);
         private static readonly Regex Inline = new(@"(?:\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|~~[^~\n]+~~|!?\[[^\]\n]*\]\([^)\n]+\))", RegexOptions.Compiled);
+
+        /// <summary>返回正文里第一个 markdown 表格首行（表头）的行号（0 起）；没有表格返回 -1。
+        /// 判据与 FCTB 的 AlignMarkdownTables 一致：本行含 |，下一行是分隔线行。</summary>
+        public static int FirstTableLine(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return -1;
+            string[] lines = text.Replace("\r\n", "\n").Split('\n');
+            for (int i = 0; i + 1 < lines.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(lines[i]) || !lines[i].Contains('|')) continue;
+                if (!TableSeparator.IsMatch(lines[i + 1])) continue;
+                if (Fence.IsMatch(lines[i])) continue;   // 围栏里的表格是代码
+                return i;
+            }
+            return -1;
+        }
+
+        /// <summary>提取正文里第一个 markdown 表格的原文（表头 + 分隔线 + 数据行，保留原样）；没有表格返回 null。</summary>
+        public static string ExtractFirstTable(string text)
+        {
+            int start = FirstTableLine(text);
+            if (start < 0) return null;
+            string[] lines = text.Replace("\r\n", "\n").Split('\n');
+            int end = start + 1;
+            while (end < lines.Length && lines[end].Trim().Length > 0 && lines[end].Contains('|'))
+                end++;
+            return string.Join("\n", lines[start..end]);
+        }
 
         public static bool IsMarkdown(string text)
         {

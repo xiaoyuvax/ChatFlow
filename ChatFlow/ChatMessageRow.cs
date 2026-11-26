@@ -1,4 +1,4 @@
-using System.Drawing.Drawing2D;
+﻿using System.Drawing.Drawing2D;
 using FastColoredTextBoxNS;
 using FastColoredTextBoxNS.Text;
 #if NET8_0_OR_GREATER
@@ -67,11 +67,16 @@ namespace ChatFlow
         /// <summary>点击可点击链接（URL / 图像文件路径）后触发；由容器转交宿主。</summary>
         public event Action<ChatFlowItem, ChatTextStyler.ChatLinkKind, string> LinkClicked;
 
+        /// <summary>点击 markdown 表格首行左侧 gutter 的「表格」标签后触发；宿主据此生成 LoopApp 展示该表格。</summary>
+        public event Action<ChatFlowItem, string> TableAppClicked;
+
         /// <summary>行内子控件取到焦点（用户点进正文/思考区/代码块）：行本身不取焦点，只能冒泡给容器。</summary>
         internal event EventHandler ChildFocused;
 
         [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
         public ChatFlowItem Item { get; internal set; }
+
+        private readonly ToolTip tableTip = new();   // 表格标签的 tooltip（"用LoopApp生成html表格"）
 
         private int Dip(int value) => (int)Math.Round(value * DeviceDpi / 96f);
 
@@ -188,6 +193,8 @@ namespace ChatFlow
             txt.MouseWheelForwarded += (delta, ctrl) => owner.ForwardWheel(delta, ctrl);
             txt.FoldingToggled += () => owner.RequestRelayout(this);
             txt.LinkClicked += (kind, target) => LinkClicked?.Invoke(Item, kind, target);
+            txt.TableTagClicked += _ => TableAppClicked?.Invoke(Item, Item?.Text);
+            tableTip.SetToolTip(txt, "用LoopApp生成html表格");
 
             lblThinking = new Label
             {
@@ -312,6 +319,8 @@ namespace ChatFlow
             }
             _bodyKey = bodyKey;
             ShowMarkdown(useMarkdown);
+            // markdown 表格：正文里检出表格就在其首行的左侧 gutter 挂「表格」标签（点击生成 LoopApp 展示）
+            txt.SetTableTag(ChatMarkdown.FirstTableLine(item.Text));
             // 每次绑到 markdown 都补一次重测：池化行复用时上一行的排版状态不算数，
             // 而 SetMarkdown 的换行往往晚于本次测量，行高停在偏小值就会把末尾正文裁掉。
             if (useMarkdown) owner.RequestRelayoutDeferred(this);
@@ -337,8 +346,9 @@ namespace ChatFlow
                 : "▶ " + item.ThinkingHeaderText + "（点击展开）";
             lblThinking.ForeColor = P != null ? P.ForeDim : Color.Gray;
             // 协作提示那一行与它的答复轮：思考区铺淡黄底、深色字（深色主题的淡黄压暗一档，文字跟着反白）。
+            // 提示行整行都是淡黄底（含折叠头与展开后的全文），别在里面留一块白底；
             // 答复轮只染思考区，正文仍用默认底色：要告知用户的内容才进正文。
-            if (NoticeBackColor(item) is { } back)
+            if ((NoticeRowBackColor(item) ?? NoticeBackColor(item)) is { } back)
             {
                 Color fore = back.GetBrightness() < 0.5f
                     ? Color.FromArgb(0xFF, 0xF1, 0xB8)
@@ -1027,6 +1037,20 @@ namespace ChatFlow
         /// <summary>点击可点击链接（URL / 本地文件路径）后触发；宿主决定怎么处理。</summary>
         public event Action<ChatTextStyler.ChatLinkKind, string> LinkClicked;
 
+        /// <summary>点击表格标签（左侧 gutter 里画的小图标）后触发。</summary>
+        public event Action<int> TableTagClicked;
+
+        /// <summary>表格标签（小表格图标）绘在哪一行的 gutter；-1 = 没有。绘制在 PaintLine、命中在 MouseDown，同一坐标系。</summary>
+        public int TableTagLine { get; private set; } = -1;
+
+        /// <summary>把表格标签画到指定行的左侧 gutter（iLine<0 清掉）。坐标是控件客户区，绘制与命中同一出处。</summary>
+        public void SetTableTag(int iLine)
+        {
+            if (TableTagLine == iLine) return;
+            TableTagLine = iLine;
+            Invalidate();
+        }
+
         /// <summary>右键请求菜单（参数为屏幕坐标）。</summary>
         public event Action<Point> ContextMenuRequested;
 
@@ -1061,8 +1085,39 @@ namespace ChatFlow
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e); // FCTB 在这里处理折叠标记的展开/收起与链接点击
+            if (e.Button == MouseButtons.Left && TableTagLine >= 0 && TableTagHitTest(e.Location))
+            {
+                TableTagClicked?.Invoke(TableTagLine);
+                return;
+            }
             if (e.Button == MouseButtons.Left && e.X < LeftIndent)
                 FoldingToggled?.Invoke();
+        }
+
+        /// <summary>表格标签的命中矩形：左侧 gutter（LeftIndent 内）整行高。与 OnPaint 的绘制矩形同源。</summary>
+        private bool TableTagHitTest(Point p)
+            => p.X >= 0 && p.X < LeftIndent && TableTagLine >= 0
+               && p.Y >= 0 && p.Y < ClientSize.Height;   // 简化为「点在 gutter 内」：标签只挂在表格首行，一行正文里不会有两个标签
+
+        protected override void OnPaintLine(PaintLineEventArgs e)
+        {
+            base.OnPaintLine(e);
+            // 表格首行的左侧 gutter 画一个小表格图标：点击后宿主用 LoopApp 渲染这张表。
+            // 画在 OnPaintLine（每行回调，行 y 坐标现成），命中走 OnMouseDown 的 gutter 判定——两者坐标系一致。
+            if (e.LineIndex == TableTagLine && TableTagLine >= 0)
+            {
+                int size = Math.Max(10, (int)Math.Round(12 * DeviceDpi / 96f));
+                int x = Math.Max(2, (LeftIndent - size) / 2);
+                int y = e.LineRect.Y + Math.Max(0, (CharHeight - size) / 2);
+                var r = new Rectangle(x, y, size, size);
+                bool dark = ChatTheme.Current != null && ChatTheme.Current.Back.GetBrightness() < 0.5f;
+                using var fore = new Pen(dark ? Color.FromArgb(0x7A, 0xA8, 0xD8) : Color.FromArgb(0x4A, 0x6E, 0x96));
+                var g = e.Graphics;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.DrawRectangle(fore, r.X, r.Y, r.Width - 1, r.Height - 1);                 // 外框
+                g.DrawLine(fore, r.X, r.Y + size / 3, r.Right - 1, r.Y + size / 3);         // 表头分隔线
+                g.DrawLine(fore, r.X + size / 3, r.Y + size / 3, r.X + size / 3, r.Bottom - 1); // 列分隔线
+            }
         }
 
         protected override void OnMouseUp(MouseEventArgs e)

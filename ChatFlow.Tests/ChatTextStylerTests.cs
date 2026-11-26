@@ -1,4 +1,4 @@
-using FastColoredTextBoxNS.Text;
+﻿using FastColoredTextBoxNS.Text;
 using FastColoredTextBoxNS.Types;
 using Xunit;
 using ChatFlow;

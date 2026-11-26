@@ -1,4 +1,4 @@
-using System.Drawing;
+﻿using System.Drawing;
 using Xunit;
 
 namespace ChatFlow.Tests

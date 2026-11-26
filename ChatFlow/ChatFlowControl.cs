@@ -1,4 +1,4 @@
-using FastColoredTextBoxNS;
+﻿using FastColoredTextBoxNS;
 
 namespace ChatFlow
 {
@@ -75,6 +75,9 @@ namespace ChatFlow
 
         /// <summary>点击正文/思考区里的可点击链接（URL、图像文件路径）后触发；宿主决定打开方式。</summary>
         public event EventHandler<ChatLinkClickedEventArgs> LinkClicked;
+
+        /// <summary>点击 markdown 表格首行左侧 gutter 的标签：宿主据此对该表格生成 LoopApp 展示。</summary>
+        public event EventHandler<ChatTableAppClickedEventArgs> TableAppClicked;
 
         /// <summary>请求撤回一个问答对（宿主负责删除回话并撤销文件修改）。</summary>
         public event EventHandler<ChatFlowActionEventArgs> UndoRequested;
@@ -1434,6 +1437,7 @@ namespace ChatFlow
                         row.SelectionToggled += Row_SelectionToggled;
                         row.ThinkingToggled += Row_ThinkingToggled;
                         row.LinkClicked += Row_LinkClicked;
+            row.TableAppClicked += Row_TableAppClicked;
                         row.ShowSelection = showSelection;
                         if (measured != cached)
                         {
@@ -1566,6 +1570,7 @@ namespace ChatFlow
                 row.SelectionToggled -= Row_SelectionToggled;
             row.ThinkingToggled -= Row_ThinkingToggled;
             row.LinkClicked -= Row_LinkClicked;
+            row.TableAppClicked -= Row_TableAppClicked;
             row.Item = null;
             row.Visible = false;
             rowPool.Add(row);
@@ -1573,6 +1578,9 @@ namespace ChatFlow
 
         private void Row_LinkClicked(ChatFlowItem item, ChatTextStyler.ChatLinkKind kind, string target)
             => LinkClicked?.Invoke(this, new ChatLinkClickedEventArgs(item, kind, target));
+
+        private void Row_TableAppClicked(ChatFlowItem item, string text)
+            => TableAppClicked?.Invoke(this, new ChatTableAppClickedEventArgs(item, text));
 
         private void Row_ThinkingToggled(ChatFlowItem item)
         {
@@ -2249,6 +2257,21 @@ public sealed class ChatLinkClickedEventArgs : EventArgs
 
         /// <summary>URL 文本或本地文件路径（与聊天区内显示的文本一致）。</summary>
         public string Target { get; }
+    }
+
+    /// <summary>点击 markdown 表格标签：携带所在条目与该条正文（宿主从中提取表格生成 LoopApp）。</summary>
+    public sealed class ChatTableAppClickedEventArgs : EventArgs
+    {
+        public ChatTableAppClickedEventArgs(ChatFlowItem item, string text)
+        {
+            Item = item;
+            Text = text;
+        }
+
+        public ChatFlowItem Item { get; }
+
+        /// <summary>所在条目的正文全文（含表格 markdown 原文）。</summary>
+        public string Text { get; }
     }
 
     /// <summary>一条可显示的聊天消息（回话的一半：用户或助手）。</summary>
