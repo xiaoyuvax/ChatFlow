@@ -313,6 +313,49 @@ namespace ChatFlow.Tests
         }
 
         [StaFact]
+        public void ReusedRow_DropsPreviousThinkingText()
+        {
+            // 回归：池化行换绑到另一个条目后，展开的思考区仍显示上一条的思维——
+            // 用户侧表现：第二个「宿主提示 · 继续」展开后看到的是上一轮的思考内容。
+            var previous = new ChatTurn
+            {
+                User = new ChatMessage("user", "上一个问题"),
+                Assistant = new ChatMessage("assistant", "上一个回答"),
+                ReasoningText = new string('思', 2000),
+                ThinkingExpanded = true,
+            };
+            var notice = new ChatTurn
+            {
+                User = new ChatMessage("user", "继续"),
+                Notice = true,
+                NoticeKind = "host",
+            };
+            notice.PhaseExpanded[int.MinValue] = true;   // 提示行被点开过
+
+            using var ownerFlow = new ChatFlowControl();
+            using var row = new ChatMessageRow(ownerFlow);
+            var font = new Font("Consolas", 9.75F);
+            var host = new Form();
+            host.Controls.Add(row);
+            host.Show();
+            try
+            {
+                row.Bind(new ChatFlowItem(previous, ChatFlowItemKind.Assistant), font, 600);
+                var thinking = GetField<WF.Control>(row, "txtThinking");
+                Assert.Contains("思思思思", thinking.Text);   // 上一条的思维已铺进思考区
+
+                row.Bind(new ChatFlowItem(notice, ChatFlowItemKind.User), font, 600);
+                Assert.Equal("继续", thinking.Text.TrimEnd('\r', '\n'));
+            }
+            finally
+            {
+                font.Dispose();
+                host.Hide();
+                host.Dispose();
+            }
+        }
+
+        [StaFact]
         public void NoticeReply_FillsThinkingOnly_AndHasNoTopPad()
         {
             // 协作提示的答复轮：思考区铺淡黄底（与提示同一格式，用户可整块跳过），正文保持默认底色。

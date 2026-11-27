@@ -276,6 +276,13 @@ namespace ChatFlow
         public int Bind(ChatFlowItem item, Font font, int reservedWidth)
         {
             _binding = true;
+            // 池化行换绑到另一条：思考区缓存必须作废，否则展开时可能沿用上一条的思维
+            // （新文本比旧文本短不足 ThinkingRerenderDelta 时不会重排，旧内容原地可见）
+            if (!ReferenceEquals(Item, item))
+            {
+                _thinkingKey = null;
+                _thinkingRerenderedAt = 0;
+            }
             _contentWidth = Math.Max(Dip(20), reservedWidth - Dip(TextRightSpace));
             UpdateBodyGeometry(item, font, reservedWidth);
             // 行表面与勾选框底色：主题切换只重绑（OnAppThemeChanged → Bind），不会重建控件，
@@ -350,6 +357,7 @@ namespace ChatFlow
 
             // 思考区：有内容才显示折叠头；执行中的「思考中…」由末尾的动画行统一提示。
             // 长思维链拆片后的后续分片没有折叠头，展开态下直接铺开。
+            bool thinkingBoxWasShown = thinkingBoxShown;
             thinkingVisible = item.ThinkingText != null;
             thinkingHeaderShown = thinkingVisible && !item.IsThinkingContinuation;
             thinkingBoxShown = thinkingVisible && (item.ThinkingExpanded || item.IsThinkingContinuation);
@@ -375,8 +383,9 @@ namespace ChatFlow
             bool thinkingChanged = thinkingKey != _thinkingKey;
             // 流式期间思维链每 250ms 增量一次：整段 ApplyThinking + NeedRecalc(full) 是 O(全文) 的正则+FCTB 重排，
             // 长思维链（数万字）叠加节拍器会让 UI 线程长时间停摆。增量超过阈值才整段重算，小增量沿用上次排版。
+            // 刚展开（上一次没显示）时必须重算：否则折叠期间的小增量会把旧文本当作全文铺出来。
             bool bigEnough = thinkingChanged
-                && (_thinkingRerenderedAt <= 0
+                && (_thinkingRerenderedAt <= 0 || !thinkingBoxWasShown
                     || Math.Abs((item.ThinkingText ?? "").Length - _thinkingRenderedLength) >= ThinkingRerenderDelta);
             if (thinkingBoxShown && item.ThinkingText != null && bigEnough)
             {
