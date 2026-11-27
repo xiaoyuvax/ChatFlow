@@ -194,7 +194,7 @@ namespace ChatFlow
             txt.FoldingToggled += () => owner.RequestRelayout(this);
             txt.LinkClicked += (kind, target) => LinkClicked?.Invoke(Item, kind, target);
             txt.TableTagClicked += _ => TableAppClicked?.Invoke(Item, Item?.Text);
-            tableTip.SetToolTip(txt, "用LoopApp生成html表格");
+            tableTip.SetToolTip(txt, "点击用 LoopApp 渲染表格");
 
             lblThinking = new Label
             {
@@ -319,8 +319,13 @@ namespace ChatFlow
             }
             _bodyKey = bodyKey;
             ShowMarkdown(useMarkdown);
-            // markdown 表格：正文里检出表格就在其首行的左侧 gutter 挂「表格」标签（点击生成 LoopApp 展示）
-            txt.SetTableTag(ChatMarkdown.FirstTableLine(item.Text));
+            // markdown 表格：正文里检出表格就在其首行的左侧 gutter 挂「表格」标签（点击生成 LoopApp 展示）。
+            // 只在 markdown 渲染时挂：纯文本不按表格排版，标签会与所见不一致。
+#if NET8_0_OR_GREATER
+            txt.SetTableTag(useMarkdown ? ChatMarkdown.FirstTableLine(item.Text) : -1);
+#else
+            txt.SetTableTag(-1);
+#endif
             // 每次绑到 markdown 都补一次重测：池化行复用时上一行的排版状态不算数，
             // 而 SetMarkdown 的换行往往晚于本次测量，行高停在偏小值就会把末尾正文裁掉。
             if (useMarkdown) owner.RequestRelayoutDeferred(this);
@@ -830,6 +835,7 @@ namespace ChatFlow
             {
                 actionHide.Stop();
                 actionHide.Dispose();
+                tableTip.Dispose();
 #if NET8_0_OR_GREATER
                 foreach (var block in _blocks)
                 {
@@ -1094,10 +1100,14 @@ namespace ChatFlow
                 FoldingToggled?.Invoke();
         }
 
-        /// <summary>表格标签的命中矩形：左侧 gutter（LeftIndent 内）整行高。与 OnPaint 的绘制矩形同源。</summary>
+        /// <summary>表格标签的命中矩形：左侧 gutter（LeftIndent 内）且点在标签所在行上。
+        /// 行顶部与渲染同源（PlaceToPoint 的 Y：startY − 滚动量）。</summary>
         private bool TableTagHitTest(Point p)
-            => p.X >= 0 && p.X < LeftIndent && TableTagLine >= 0
-               && p.Y >= 0 && p.Y < ClientSize.Height;   // 简化为「点在 gutter 内」：标签只挂在表格首行，一行正文里不会有两个标签
+        {
+            if (p.X < 0 || p.X >= LeftIndent || TableTagLine < 0) return false;
+            int top = PlaceToPoint(new FastColoredTextBoxNS.Types.Place(0, TableTagLine)).Y;
+            return p.Y >= top && p.Y < top + CharHeight;
+        }
 
         protected override void OnPaintLine(PaintLineEventArgs e)
         {

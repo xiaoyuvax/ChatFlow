@@ -13,16 +13,19 @@ namespace ChatFlow
         private static readonly Regex Inline = new(@"(?:\*\*[^*\n]+\*\*|__[^_\n]+__|`[^`\n]+`|~~[^~\n]+~~|!?\[[^\]\n]*\]\([^)\n]+\))", RegexOptions.Compiled);
 
         /// <summary>返回正文里第一个 markdown 表格首行（表头）的行号（0 起）；没有表格返回 -1。
-        /// 判据与 FCTB 的 AlignMarkdownTables 一致：本行含 |，下一行是分隔线行。</summary>
+        /// 判据与 FCTB 的 AlignMarkdownTables 一致：本行含 |，下一行是分隔线行。跳过围栏内的代码。</summary>
         public static int FirstTableLine(string text)
         {
             if (string.IsNullOrEmpty(text)) return -1;
             string[] lines = text.Replace("\r\n", "\n").Split('\n');
-            for (int i = 0; i + 1 < lines.Length; i++)
+            bool inFence = false;
+            for (int i = 0; i < lines.Length; i++)
             {
+                if (Fence.IsMatch(lines[i])) { inFence = !inFence; continue; }
+                if (inFence) continue;
+                if (i + 1 >= lines.Length) break;
                 if (string.IsNullOrWhiteSpace(lines[i]) || !lines[i].Contains('|')) continue;
                 if (!TableSeparator.IsMatch(lines[i + 1])) continue;
-                if (Fence.IsMatch(lines[i])) continue;   // 围栏里的表格是代码
                 return i;
             }
             return -1;
