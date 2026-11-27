@@ -22,6 +22,10 @@ namespace ChatFlow
 
         /// <summary>协作提示（仿用户消息）的底色：淡黄，与正文区区分；null = 用内置淡黄。</summary>
         public Color NoticeBack { get; set; }
+
+        /// <summary>失败轮正文前缀（如「执行失败：」）的字色：浅色主题是深红，深色主题要亮一档；
+        /// Color.Empty = 用内置色。</summary>
+        public Color FailureFore { get; set; }
     }
 
     /// <summary>

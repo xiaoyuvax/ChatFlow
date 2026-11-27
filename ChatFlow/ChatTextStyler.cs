@@ -17,7 +17,7 @@ namespace ChatFlow
     {
         // ============ 样式（按当前主题重建；FCTB 渲染期只读。Style 为抽象类，实际用 TextStyle） ============
         private static Style CodeBlockStyle, PathStyle, ToolCallStyle, ToolOkStyle, ToolFailStyle, ToolOutputStyle,
-            AttachmentStyle, ReasoningMarkStyle, PromptBlockStyle, ResMarkStyle;
+            AttachmentStyle, ReasoningMarkStyle, PromptBlockStyle, ResMarkStyle, FailureStyle;
 
         private static int _paletteStamp = int.MinValue;
 
@@ -59,13 +59,45 @@ namespace ChatFlow
                 // 分辨率档位词：亮青加粗字（深色底上清晰，且不刺眼）
                 ResMarkStyle = new TextStyle(B(Color.FromArgb(0x7F, 0xE3, 0xE3)), null, FontStyle.Bold);
             }
+            // 失败轮正文前缀：深色主题下深红看不清，跟着主题提亮一档
+            FailureStyle = new TextStyle(new SolidBrush(FailureFore), null, FontStyle.Bold);
         }
+
+        /// <summary>失败轮前缀字色（调色板给了就用调色板的，否则浅色主题用深红）。</summary>
+        private static Color FailureFore
+            => ChatTheme.Current is { } p && p.FailureFore != Color.Empty
+                ? p.FailureFore
+                : Color.FromArgb(0x8B, 0x00, 0x00);
+
+        private static string _failurePrefix = "";
+
+        /// <summary>宿主声明「这不是模型正文、是执行失败说明」的正文前缀（如「执行失败：」）：
+        /// 前缀用深红加粗、整段用弱化字色。空 = 不识别（ChatFlow 不认识宿主文案）。</summary>
+        public static string FailurePrefix
+        {
+            get => _failurePrefix;
+            set
+            {
+                _failurePrefix = value ?? "";
+                _failureRegex = null;
+            }
+        }
+
+        private static Regex _failureRegex;
+
+        private static Regex FailureStartRegex
+            => _failureRegex ??= new Regex(@"^\s*" + Regex.Escape(_failurePrefix));
+
+        /// <summary>正文是否以失败前缀开头（宿主拼的失败说明，不是模型回复）。</summary>
+        public static bool IsFailure(string text)
+            => _failurePrefix.Length > 0 && text != null
+               && text.TrimStart().StartsWith(_failurePrefix, StringComparison.Ordinal);
 
         private static Style[] AllStyles =>
         [
             CodeBlockStyle, PathStyle,
             ToolCallStyle, ToolOkStyle, ToolFailStyle, ToolOutputStyle, AttachmentStyle, ReasoningMarkStyle,
-            PromptBlockStyle, ResMarkStyle
+            PromptBlockStyle, ResMarkStyle, FailureStyle
         ];
 
         // ============ 正则（^ 锚点配 Multiline：逐行生效） ============
@@ -252,6 +284,8 @@ namespace ChatFlow
                 range.SetStyle(CodeBlockStyle, FenceRegex);
                 ApplyCodeBlockFolding(box, text);
                 ApplyBraceBlockFolding(box, text); // 无围栏的多行 JSON（正文里也可能出现）
+                // 失败说明（宿主拼的「执行失败：…」）：前缀深红加粗，其余字色由行控件弱化
+                if (IsFailure(text)) range.SetStyle(FailureStyle, FailureStartRegex);
             }
             catch
             {
@@ -705,6 +739,7 @@ namespace ChatFlow
         internal static Style ToolOutputStyleField => ToolOutputStyle;
         internal static Style AttachmentStyleField => AttachmentStyle;
         internal static Style ReasoningMarkStyleField => ReasoningMarkStyle;
+        internal static Style FailureStyleField => FailureStyle;
 
         internal static bool IsFoldStart(FastColoredTextBox box, int lineIndex)
             => lineIndex < box.LinesCount && !string.IsNullOrEmpty(box[lineIndex].FoldingStartMarker);

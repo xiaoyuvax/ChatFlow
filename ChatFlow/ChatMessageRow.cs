@@ -140,6 +140,10 @@ namespace ChatFlow
 
         private static ChatPalette P => ChatTheme.Current;   // null = 浅色（沿用原配色）
 
+        /// <summary>失败说明的正文（前缀之外的错误原因）用弱化字色，与模型正文区分。</summary>
+        private static Color FailureBodyFore()
+            => P != null ? P.ChatThinkingFore : Color.FromArgb(0x5F, 0x6E, 0x7E);
+
         /// <summary>协作提示的底色（淡黄）。设成了透明表示不铺。</summary>
         private static Color? NoticeFill()
             => P != null && P.NoticeBack != Color.Empty ? P.NoticeBack : Color.FromArgb(0xFF, 0xFF, 0xE0);
@@ -289,9 +293,12 @@ namespace ChatFlow
             ContextMenuStrip = owner.ContextMenuStrip;
             chk.ContextMenuStrip = owner.ContextMenuStrip;
             txt.ContextMenuStrip = owner.ContextMenuStrip;
+            // 失败说明（宿主拼的「执行失败：…」）不是模型正文：整段用弱化字色区分，前缀由样式染深红
+            bool failed = !item.IsUser && ChatTextStyler.IsFailure(item.Text);
             bool useMarkdown =
 #if NET8_0_OR_GREATER
-                owner.MarkdownReady && ChatMarkdown.UseMarkdown(item.Text, item.Turn.Streaming);
+                // 失败说明不是模型正文：不走 markdown，按纯文本弱化显示（前缀另行染深红）
+                !failed && owner.MarkdownReady && ChatMarkdown.UseMarkdown(item.Text, item.Turn.Streaming);
 #else
                 false;
 #endif
@@ -334,7 +341,8 @@ namespace ChatFlow
             // 勾选按整轮生效、由第一片代表：续片不单独出勾选框，免得只取消其中一段
             chk.Visible = _showSelection && !item.IsContinuation && !item.Notice;
             txt.BackColor = owner.BackColor;
-            txt.ForeColor = P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
+            txt.ForeColor = failed ? FailureBodyFore()
+                : P != null ? P.ChatFore : Color.FromArgb(0x1B, 0x26, 0x33);
             txtThinking.ForeColor = P != null ? P.ChatThinkingFore : Color.FromArgb(0x5F, 0x6E, 0x7E);
             // 思考区底色与聊天背景一致，避免 FCTB 出现色块。
             txtThinking.BackColor = owner.BackColor;

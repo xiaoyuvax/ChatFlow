@@ -409,6 +409,29 @@ namespace ChatFlow.Tests
                 "时间线工具行的工具名未着色");
         }
 
+        [StaFact]
+        public void Body_FailurePrefix_GetsDarkRedMarkOnly()
+        {
+            string old = ChatTextStyler.FailurePrefix;
+            ChatTextStyler.FailurePrefix = "执行失败：";
+            try
+            {
+                using var box = NewBox();
+                string text = "执行失败：provider.free-limit：Free usage limit reached.";
+                box.Text = text;
+                ChatTextStyler.ApplyBody(box, text);
+
+                Assert.True(ChatTextStyler.IsFailure(text));
+                Assert.True(HasStyle(box[0], 0, ChatTextStyler.FailureStyleField), "失败前缀未染深红");
+                Assert.False(HasStyle(box[0], text.IndexOf("provider", StringComparison.Ordinal),
+                    ChatTextStyler.FailureStyleField), "失败原因不该跟前缀一起染");
+            }
+            finally
+            {
+                ChatTextStyler.FailurePrefix = old;
+            }
+        }
+
         private static bool HasStyle(Line line, int charIndex, Style style)
         {
             if (charIndex < 0 || line == null || charIndex >= line.Count) return false;
